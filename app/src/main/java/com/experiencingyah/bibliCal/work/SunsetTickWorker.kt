@@ -1,5 +1,6 @@
 package com.experiencingyah.bibliCal.work
 
+import android.content.Intent
 import android.content.Context
 import android.util.Log
 import androidx.work.CoroutineWorker
@@ -9,7 +10,10 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.experiencingyah.bibliCal.data.LunarRepository
 import com.experiencingyah.bibliCal.data.settings.SettingsRepository
+import com.experiencingyah.bibliCal.shabbat.ShabbatContract
 import com.experiencingyah.bibliCal.util.SunsetCalculator
+import kotlinx.coroutines.flow.first
+import java.time.DayOfWeek
 import java.time.Duration
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -31,13 +35,67 @@ class SunsetTickWorker(
         val repo = LunarRepository(applicationContext)
         val settings = SettingsRepository(applicationContext)
 
-        // Update the status notification and widgets
-        StatusUpdater.updateStatusAndWidgets(applicationContext, repo, settings)
+        // Update the status notification and widgets (atSunset=true for new day notification)
+        val today = StatusUpdater.updateStatusAndWidgets(
+            applicationContext, repo, settings, atSunset = true
+        )
+
+        // Notify SabbatiCal (Sabbath Mode) so it can turn DND/overlay on or off
+        notifySabbatiCalIfShabbatTransition(applicationContext, settings)
+
+        // If we're now on day 29, schedule moon prompt for 1 hour before next sunset
+        if (today?.dayOfMonth == 29) {
+            MoonPromptWorker.scheduleIfDay29(applicationContext)
+        }
 
         // Schedule the next sunset tick
         scheduleNextSunsetTick(applicationContext, settings)
 
         return Result.success()
+    }
+
+    /**
+     * If we're at Friday sunset → Shabbat started: broadcast to SabbatiCal with end time.
+     * If we're at Saturday sunset → Shabbat ended: broadcast to SabbatiCal.
+     * Uses the same Shabbat definition as the rest of BibliCal (Friday/Saturday sunset).
+     */
+    private suspend fun notifySabbatiCalIfShabbatTransition(context: Context, settings: SettingsRepository) {
+        val (latitude, longitude) = StatusUpdater.getLocation(settings)
+        val zoneId = ZoneId.systemDefault()
+        val now = ZonedDateTime.now(zoneId)
+        val dateOfSunsetWeJustPassed = now.toLocalDate()
+        val useCivilTwilight = settings.useCivilTwilightForCountdown.first()
+        val elevation = if (useCivilTwilight) SunsetCalculator.SOLAR_ELEVATION_CIVIL_TWILIGHT else SunsetCalculator.SOLAR_ELEVATION_GEOMETRIC
+
+        when (dateOfSunsetWeJustPassed.dayOfWeek) {
+            DayOfWeek.FRIDAY -> {
+                val saturdaySunset = SunsetCalculator.calculateSunsetTime(
+                    dateOfSunsetWeJustPassed.plusDays(1),
+                    latitude,
+                    longitude,
+                    zoneId,
+                    elevation
+                )
+                val endMillis = saturdaySunset?.toInstant()?.toEpochMilli()
+                if (endMillis != null) {
+                    val intent = Intent(ShabbatContract.ACTION_SHABBAT_STARTED).apply {
+                        setPackage(ShabbatContract.SABBATICAL_PACKAGE)
+                        putExtra(ShabbatContract.EXTRA_SHABBAT_END_MILLIS, endMillis)
+                        putExtra(ShabbatContract.EXTRA_SHABBAT_END_ZONE_ID, zoneId.id)
+                    }
+                    context.sendBroadcast(intent)
+                    Log.d(TAG, "Sent SHABBAT_STARTED to SabbatiCal (end: $saturdaySunset)")
+                }
+            }
+            DayOfWeek.SATURDAY -> {
+                val intent = Intent(ShabbatContract.ACTION_SHABBAT_ENDED).apply {
+                    setPackage(ShabbatContract.SABBATICAL_PACKAGE)
+                }
+                context.sendBroadcast(intent)
+                Log.d(TAG, "Sent SHABBAT_ENDED to SabbatiCal")
+            }
+            else -> { /* not a Shabbat boundary */ }
+        }
     }
 
     companion object {
@@ -59,30 +117,29 @@ class SunsetTickWorker(
             val (latitude, longitude) = StatusUpdater.getLocation(settingsRepo)
             val zoneId = ZoneId.systemDefault()
             val now = ZonedDateTime.now(zoneId)
+            val useCivilTwilight = settingsRepo.useCivilTwilightForCountdown.first()
+            val elevation = if (useCivilTwilight) SunsetCalculator.SOLAR_ELEVATION_CIVIL_TWILIGHT else SunsetCalculator.SOLAR_ELEVATION_GEOMETRIC
 
-            // Calculate the next sunset
             val nextSunset = SunsetCalculator.calculateNextSunset(
                 latitude,
                 longitude,
-                zoneId.id
+                zoneId.id,
+                elevation
             )
 
             val delayMillis = if (nextSunset != null) {
-                // Add a small buffer to ensure we're past sunset
                 val targetTime = nextSunset.plusSeconds(SUNSET_BUFFER_SECONDS)
                 val delay = Duration.between(now, targetTime).toMillis()
-                
-                // Ensure delay is positive (at least 1 second)
                 if (delay > 0) {
                     Log.d(TAG, "Scheduling next sunset tick for $targetTime (delay: ${delay}ms)")
                     delay
                 } else {
-                    // Sunset just passed, schedule for tomorrow's sunset
                     val tomorrowSunset = SunsetCalculator.calculateSunsetTime(
                         now.toLocalDate().plusDays(1),
                         latitude,
                         longitude,
-                        zoneId
+                        zoneId,
+                        elevation
                     )
                     if (tomorrowSunset != null) {
                         val tomorrowTarget = tomorrowSunset.plusSeconds(SUNSET_BUFFER_SECONDS)

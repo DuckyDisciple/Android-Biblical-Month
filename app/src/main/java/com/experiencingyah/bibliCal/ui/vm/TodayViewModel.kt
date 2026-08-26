@@ -14,6 +14,7 @@ import com.experiencingyah.bibliCal.domain.MonthStatus
 import com.experiencingyah.bibliCal.util.MonthNames
 import com.experiencingyah.bibliCal.util.SunsetCalculator
 import com.experiencingyah.bibliCal.widgets.WidgetHelper
+import com.experiencingyah.bibliCal.work.StatusUpdater
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -135,10 +136,14 @@ class TodayViewModel(app: Application) : AndroidViewModel(app) {
         // No need to update countdown every second - it's calculated dynamically in the UI
         // Only update when sunset time or location changes
         
-        // Observe settings changes to update Jerusalem time info when setting is toggled
         viewModelScope.launch {
             settings.showJerusalemTime.collect {
                 updateJerusalemTimeInfo()
+            }
+        }
+        viewModelScope.launch {
+            settings.useCivilTwilightForCountdown.collect {
+                refresh()
             }
         }
     }
@@ -230,41 +235,31 @@ class TodayViewModel(app: Application) : AndroidViewModel(app) {
             var sunsetDate: String? = null
             var isAfterSunset = false
             var dateToUseForBiblical = todayDate
-            
-            val location = currentLocation
-            if (location != null) {
-                val zoneId = ZoneId.systemDefault()
-                val todaySunset = SunsetCalculator.calculateSunsetTime(todayDate, location.latitude, location.longitude, zoneId)
-                
-                if (todaySunset != null) {
-                    // Use the same "now" time for comparison to ensure consistency
-                    isAfterSunset = now.isAfter(todaySunset)
-                    if (isAfterSunset) {
-                        // After sunset: biblical day has advanced
-                        // Daytime date is tomorrow (the gregorian day we're in)
-                        daytimeDate = tomorrowDate.toString()
-                        // Sunset date is today (when the biblical day started at sunset)
-                        sunsetDate = todayDate.toString()
-                        // Use tomorrow's date for biblical calculation (the new biblical day)
-                        dateToUseForBiblical = tomorrowDate
-                    } else {
-                        // Before sunset: still in current biblical day
-                        // Daytime date is today
-                        daytimeDate = todayDate.toString()
-                        // Sunset date is yesterday (when the current biblical day started at sunset)
-                        sunsetDate = yesterdayDate.toString()
-                        // Use today's date for biblical calculation
-                        dateToUseForBiblical = todayDate
-                    }
+
+            // Use same location source as widget/StatusUpdater for consistent sunset/day transition
+            val (lat, lon) = currentLocation?.let { Pair(it.latitude, it.longitude) }
+                ?: StatusUpdater.getLocation(settings)
+            val zoneId = ZoneId.systemDefault()
+            val dayTransitionElevation = if (settings.useCivilTwilightForCountdown.first()) {
+                SunsetCalculator.SOLAR_ELEVATION_CIVIL_TWILIGHT
+            } else {
+                SunsetCalculator.SOLAR_ELEVATION_GEOMETRIC
+            }
+            val todaySunset = SunsetCalculator.calculateSunsetTime(todayDate, lat, lon, zoneId, dayTransitionElevation)
+            val nextSunset = SunsetCalculator.nextSunsetFrom(now, todayDate, lat, lon, zoneId, dayTransitionElevation)
+
+            if (todaySunset != null) {
+                isAfterSunset = now.isAfter(todaySunset)
+                if (isAfterSunset) {
+                    daytimeDate = tomorrowDate.toString()
+                    sunsetDate = todayDate.toString()
+                    dateToUseForBiblical = tomorrowDate
                 } else {
-                    // Sunset calculation failed - default to before sunset
                     daytimeDate = todayDate.toString()
                     sunsetDate = yesterdayDate.toString()
                     dateToUseForBiblical = todayDate
-                    isAfterSunset = false
                 }
             } else {
-                // No location - default to before sunset
                 daytimeDate = todayDate.toString()
                 sunsetDate = yesterdayDate.toString()
                 dateToUseForBiblical = todayDate
@@ -298,9 +293,18 @@ class TodayViewModel(app: Application) : AndroidViewModel(app) {
             }
             val lunarLabel = "$dayOrdinal day of the $monthOrdinal month, ${today.yearNumber}"
 
-            // Update state atomically - all date-related fields together
-            // Preserve sunset info, jerusalem time, and feasts to avoid unnecessary recalculations
+            // Update state atomically - day transition and countdown use the same nextSunset from above
             val currentState = _state.value
+            val newSunsetInfo = nextSunset?.let {
+                SunsetInfo(it, zoneId.id, currentState.sunsetInfo?.location)
+            } ?: currentState.sunsetInfo
+            val monthStartEpoch = today.monthStart.toEpochDay()
+            val ackEpoch = settings.getMoonPromptAckMonthStartEpoch()
+            val ackDay = settings.getMoonPromptAckCompletedDay()
+            val moonPromptHandledForToday = ackEpoch == monthStartEpoch && (
+                (today.dayOfMonth == 29 && ackDay >= 29) ||
+                    (today.dayOfMonth == 30 && ackDay >= 30)
+                )
             val newState = TodayUiState(
                 hasAnchor = true,
                 lunarLabel = lunarLabel,
@@ -309,17 +313,17 @@ class TodayViewModel(app: Application) : AndroidViewModel(app) {
                 gregorianSunsetDate = sunsetDate,
                 isAfterSunset = isAfterSunset,
                 currentDayOfMonth = today.dayOfMonth,
-                showNextMonthButton = today.dayOfMonth >= 28,
+                showNextMonthButton = (today.dayOfMonth == 29 || today.dayOfMonth == 30) && !moonPromptHandledForToday,
                 hint = if (today.dayOfMonth == 29 || today.dayOfMonth == 30) {
                     "Day ${today.dayOfMonth}: you'll get a prompt to confirm if the new moon was seen."
                 } else null,
                 isLoading = false,
-                sunsetInfo = currentState.sunsetInfo, // Preserve existing sunset info
-                jerusalemTimeInfo = currentState.jerusalemTimeInfo, // Preserve existing Jerusalem time info
-                upcomingFeasts = currentState.upcomingFeasts, // Preserve existing feasts
+                sunsetInfo = newSunsetInfo,
+                jerusalemTimeInfo = currentState.jerusalemTimeInfo,
+                upcomingFeasts = currentState.upcomingFeasts,
                 isLoadingSunset = currentState.isLoadingSunset,
                 isLoadingFeasts = currentState.isLoadingFeasts,
-                showWidgetBanner = currentState.showWidgetBanner, // Preserve widget banner state
+                showWidgetBanner = currentState.showWidgetBanner,
             )
             
             // Always update state to ensure consistency - the comparison was causing issues
@@ -338,67 +342,34 @@ class TodayViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun updateSunsetCountdown() {
         viewModelScope.launch {
-            val location = currentLocation
-            if (location == null) {
-                _state.value = _state.value.copy(sunsetInfo = null, isLoadingSunset = false)
+            // nextSunset is set in refresh() so countdown and day transition stay in sync.
+            // Here we only fill in the location string when missing.
+            val currentInfo = _state.value.sunsetInfo
+            if (currentInfo?.location != null) {
+                _state.value = _state.value.copy(isLoadingSunset = false)
                 return@launch
             }
-
-            // Set loading state if we don't have sunset info yet
-            if (_state.value.sunsetInfo == null) {
-                _state.value = _state.value.copy(isLoadingSunset = true)
+            if (currentInfo == null) {
+                _state.value = _state.value.copy(isLoadingSunset = false)
+                return@launch
             }
-
-            val zoneId = ZoneId.systemDefault()
-            val nextSunset = SunsetCalculator.calculateNextSunset(
-                latitude = location.latitude,
-                longitude = location.longitude,
-                timeZone = zoneId.id
+            val (lat, lon) = currentLocation?.let { Pair(it.latitude, it.longitude) }
+                ?: StatusUpdater.getLocation(settings)
+            val locationStr = withContext(Dispatchers.IO) {
+                try {
+                    val addresses = geocoder.getFromLocation(lat, lon, 1)
+                    if (!addresses.isNullOrEmpty()) {
+                        val address = addresses[0]
+                        address.locality ?: address.adminArea ?: address.countryName
+                    } else null
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            _state.value = _state.value.copy(
+                sunsetInfo = currentInfo.copy(location = locationStr),
+                isLoadingSunset = false
             )
-
-            if (nextSunset != null) {
-                // Get city name from location (only fetch once, not every second)
-                val locationStr = if (_state.value.sunsetInfo?.location == null) {
-                    withContext(Dispatchers.IO) {
-                        if (location != null) {
-                            try {
-                                val addresses = geocoder.getFromLocation(location.latitude, location.longitude, 1)
-                                if (!addresses.isNullOrEmpty()) {
-                                    val address = addresses[0]
-                                    // Try to get city name (locality), fallback to admin area, then country
-                                    address.locality ?: address.adminArea ?: address.countryName
-                                } else {
-                                    null
-                                }
-                            } catch (e: Exception) {
-                                null
-                            }
-                        } else {
-                            null
-                        }
-                    }
-                } else {
-                    _state.value.sunsetInfo?.location
-                }
-
-                val newSunsetInfo = SunsetInfo(nextSunset, zoneId.id, locationStr)
-                // Only update if sunset time or location actually changed (not countdown text)
-                val currentInfo = _state.value.sunsetInfo
-                if (currentInfo == null || 
-                    currentInfo.nextSunset != newSunsetInfo.nextSunset ||
-                    currentInfo.location != newSunsetInfo.location ||
-                    currentInfo.timeZone != newSunsetInfo.timeZone) {
-                    _state.value = _state.value.copy(
-                        sunsetInfo = newSunsetInfo,
-                        isLoadingSunset = false
-                    )
-                } else if (_state.value.isLoadingSunset) {
-                    // Still update loading state even if info is the same
-                    _state.value = _state.value.copy(isLoadingSunset = false)
-                }
-            } else {
-                _state.value = _state.value.copy(sunsetInfo = null, isLoadingSunset = false)
-            }
         }
     }
 
@@ -466,9 +437,47 @@ class TodayViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun confirmNextMonthStartsTomorrow() {
+    /**
+     * Called when user confirms moon was seen on day 29.
+     * If currently day 29: next month starts at sundown tonight.
+     * If currently day 30 (user pressed after sunset): month ended at 29 days, today is day 1 of next month.
+     */
+    fun confirmMoonSeenOnDay29(currentDayOfMonth: Int) {
         viewModelScope.launch {
-            repo.startNextMonthOn(LocalDate.now().plusDays(1))
+            val lunar = StatusUpdater.resolveCurrentBiblicalLunarDate(repo, settings) ?: return@launch
+            val monthStartEpoch = lunar.monthStart.toEpochDay()
+            val startDate = StatusUpdater.gregorianStartForNextMonthAfterMoonPrompt(
+                moonSeen = true,
+                dayOfMonth = currentDayOfMonth,
+                settings = settings,
+            )
+            repo.startNextMonthOn(startDate)
+            settings.setMoonPromptAck(monthStartEpoch, currentDayOfMonth.coerceIn(29, 30))
+            refresh()
+        }
+    }
+
+    /**
+     * Called when user confirms moon was not seen on day 29.
+     * If day 29: month continues to day 30.
+     * If day 30: next month starts at sundown tonight.
+     */
+    fun confirmMoonNotSeenOnDay29(currentDayOfMonth: Int) {
+        viewModelScope.launch {
+            val lunar = StatusUpdater.resolveCurrentBiblicalLunarDate(repo, settings) ?: return@launch
+            val monthStartEpoch = lunar.monthStart.toEpochDay()
+            if (currentDayOfMonth == 30) {
+                val startDate = StatusUpdater.gregorianStartForNextMonthAfterMoonPrompt(
+                    moonSeen = false,
+                    dayOfMonth = 30,
+                    settings = settings,
+                )
+                repo.startNextMonthOn(startDate)
+                settings.setMoonPromptAck(monthStartEpoch, 30)
+            } else {
+                settings.setProjectedMonthLength(lunar.yearNumber, lunar.monthNumber, 30)
+                settings.setMoonPromptAck(monthStartEpoch, 29)
+            }
             refresh()
         }
     }

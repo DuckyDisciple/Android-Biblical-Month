@@ -121,6 +121,11 @@
             </intent-filter>
         </receiver>
 
+        <!-- SabbatiCal integration: next Shabbat start/end times. Authority: com.experiencingyah.bibliCal.shabbat -->
+        <provider
+            android:name=".shabbat.ShabbatProvider"
+            android:authorities="com.experiencingyah.bibliCal.shabbat"
+            android:exported="true" />
     </application>
 </manifest>
 

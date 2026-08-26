@@ -26,6 +26,7 @@ object Notifier {
     const val NOTIF_ID_PROMPT_BARLEY = 2002
     const val NOTIF_ID_SHABBAT_REMINDER = 3001
     const val NOTIF_ID_FEAST_REMINDER = 3002
+    const val NOTIF_ID_NEW_DAY = 4001
 
     fun ensureChannels(context: Context) {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -92,6 +93,53 @@ object Notifier {
         NotificationManagerCompat.from(context).cancel(NOTIF_ID_STATUS)
     }
 
+    fun cancelMoonPrompt(context: Context) {
+        NotificationManagerCompat.from(context).cancel(NOTIF_ID_PROMPT_MOON)
+    }
+
+    fun cancelBarleyPrompt(context: Context) {
+        NotificationManagerCompat.from(context).cancel(NOTIF_ID_PROMPT_BARLEY)
+    }
+
+    /**
+     * One-time notification when the biblical day changes at sunset.
+     * Shown when status notification is disabled, so the user is always informed.
+     */
+    fun showNewDayNotification(context: Context, lunarDate: LunarDate) {
+        val contentIntent = PendingIntent.getActivity(
+            context,
+            0,
+            Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val settings = SettingsRepository(context)
+        val namingMode = runBlocking { settings.monthNamingMode.first() }
+        val monthName = MonthNames.format(lunarDate.monthNumber, namingMode)
+        val dayOrdinal = when (lunarDate.dayOfMonth) {
+            1 -> "1st"
+            2 -> "2nd"
+            3 -> "3rd"
+            21 -> "21st"
+            22 -> "22nd"
+            23 -> "23rd"
+            31 -> "31st"
+            else -> "${lunarDate.dayOfMonth}th"
+        }
+
+        val notif = NotificationCompat.Builder(context, CHANNEL_STATUS)
+            .setSmallIcon(R.drawable.ic_notification_moon)
+            .setContentTitle("New biblical day")
+            .setContentText("$dayOrdinal day of the $monthName month, Year ${lunarDate.yearNumber}")
+            .setContentIntent(contentIntent)
+            .setAutoCancel(true)
+            .build()
+
+        NotificationManagerCompat.from(context).notify(NOTIF_ID_NEW_DAY, notif)
+    }
+
     fun showMoonPrompt(context: Context, dayOfMonth: Int) {
         val contentIntent = PendingIntent.getActivity(
             context,
@@ -102,19 +150,21 @@ object Notifier {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val seenPi = actionPI(context, NotificationActionReceiver.ACTION_MOON_SEEN, 10)
-        val notSeenPi = actionPI(context, NotificationActionReceiver.ACTION_MOON_NOT_SEEN, 11)
+        val seenPi = actionPI(context, NotificationActionReceiver.ACTION_MOON_SEEN, 10, dayOfMonth = dayOfMonth)
+        val notSeenPi = actionPI(context, NotificationActionReceiver.ACTION_MOON_NOT_SEEN, 11, dayOfMonth = dayOfMonth)
         val laterPi = actionPI(context, NotificationActionReceiver.ACTION_MOON_LATER, 12)
 
+        val helper = context.getString(R.string.moon_prompt_notification_big_text)
         val notif = NotificationCompat.Builder(context, CHANNEL_PROMPTS)
             .setSmallIcon(R.drawable.ic_notification_moon)
-            .setContentTitle("New moon check (day $dayOfMonth)")
-            .setContentText("Was the new moon seen?")
+            .setContentTitle(context.getString(R.string.moon_prompt_notification_title))
+            .setContentText(context.getString(R.string.moon_prompt_notification_summary, dayOfMonth))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(helper))
             .setContentIntent(contentIntent)
             .setAutoCancel(true)
-            .addAction(0, "Seen", seenPi)
-            .addAction(0, "Not seen", notSeenPi)
-            .addAction(0, "Later", laterPi)
+            .addAction(0, context.getString(R.string.moon_prompt_action_seen), seenPi)
+            .addAction(0, context.getString(R.string.moon_prompt_action_not_seen), notSeenPi)
+            .addAction(0, context.getString(R.string.moon_prompt_action_later), laterPi)
             .build()
 
         NotificationManagerCompat.from(context).notify(NOTIF_ID_PROMPT_MOON, notif)
@@ -190,10 +240,17 @@ object Notifier {
         NotificationManagerCompat.from(context).notify(NOTIF_ID_FEAST_REMINDER + feastDate.hashCode(), notif)
     }
 
-    private fun actionPI(context: Context, action: String, requestCode: Int, yearNumber: Int? = null): PendingIntent {
+    private fun actionPI(
+        context: Context,
+        action: String,
+        requestCode: Int,
+        yearNumber: Int? = null,
+        dayOfMonth: Int? = null
+    ): PendingIntent {
         val intent = Intent(context, NotificationActionReceiver::class.java).apply {
             this.action = action
             yearNumber?.let { putExtra(NotificationActionReceiver.EXTRA_YEAR_NUMBER, it) }
+            dayOfMonth?.let { putExtra(NotificationActionReceiver.EXTRA_DAY_OF_MONTH, it) }
         }
         return PendingIntent.getBroadcast(
             context,

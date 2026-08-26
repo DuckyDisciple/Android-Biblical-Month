@@ -8,10 +8,17 @@ import kotlin.math.*
 import kotlin.math.roundToInt
 
 /**
- * Calculates sunset time for a given date and location.
+ * Calculates sunset (or twilight) time for a given date and location.
  * Uses approximate astronomical calculations.
+ *
+ * Solar elevation: 0° = geometric sunset (sun at horizon); -6° = civil twilight end ("when it gets dark").
  */
 object SunsetCalculator {
+    /** Geometric sunset: sun's center at horizon (0°). Biblical day begins here. */
+    const val SOLAR_ELEVATION_GEOMETRIC = 0.0
+    /** Civil twilight end: sun 6° below horizon (~25–35 min after geometric). */
+    const val SOLAR_ELEVATION_CIVIL_TWILIGHT = -6.0
+
     /**
      * Calculate sunset time for a given date and location.
      * @param date The date to calculate sunset for
@@ -28,7 +35,6 @@ object SunsetCalculator {
     ): LocalDateTime? {
         return try {
             val zoneId = ZoneId.of(timeZone)
-            val zonedDate = date.atStartOfDay(zoneId)
             val sunset = calculateSunsetTime(date, latitude, longitude, zoneId)
             sunset?.toLocalDateTime()
         } catch (e: Exception) {
@@ -39,43 +45,66 @@ object SunsetCalculator {
     /**
      * Calculate the next sunset from now.
      * If today's sunset has passed, returns tomorrow's sunset.
+     * @param solarElevationDegrees 0 = geometric sunset, -6 = civil twilight end (when it gets dark).
      */
     fun calculateNextSunset(
         latitude: Double,
         longitude: Double,
-        timeZone: String = "UTC"
+        timeZone: String = "UTC",
+        solarElevationDegrees: Double = SOLAR_ELEVATION_GEOMETRIC
     ): ZonedDateTime? {
         val zoneId = ZoneId.of(timeZone)
         val now = ZonedDateTime.now(zoneId)
         val today = now.toLocalDate()
-        
-        val todaySunset = calculateSunsetTime(today, latitude, longitude, zoneId)
+        val todaySunset = calculateSunsetTime(today, latitude, longitude, zoneId, solarElevationDegrees)
         return if (todaySunset != null && todaySunset.isAfter(now)) {
             todaySunset
         } else {
-            calculateSunsetTime(today.plusDays(1), latitude, longitude, zoneId)
+            calculateSunsetTime(today.plusDays(1), latitude, longitude, zoneId, solarElevationDegrees)
         }
     }
 
+    /**
+     * Next sunset from a given "now" and date. Use this with the same now/date used for
+     * "after sunset" so the countdown and day transition never disagree.
+     */
+    fun nextSunsetFrom(
+        now: ZonedDateTime,
+        todayDate: LocalDate,
+        latitude: Double,
+        longitude: Double,
+        zoneId: ZoneId,
+        solarElevationDegrees: Double = SOLAR_ELEVATION_GEOMETRIC
+    ): ZonedDateTime? {
+        val todaySunset = calculateSunsetTime(todayDate, latitude, longitude, zoneId, solarElevationDegrees)
+        return if (todaySunset != null && !now.isAfter(todaySunset)) {
+            todaySunset
+        } else {
+            calculateSunsetTime(todayDate.plusDays(1), latitude, longitude, zoneId, solarElevationDegrees)
+        }
+    }
+
+    @JvmOverloads
     fun calculateSunsetTime(
         date: LocalDate,
         latitude: Double,
         longitude: Double,
-        zoneId: ZoneId
+        zoneId: ZoneId,
+        solarElevationDegrees: Double = SOLAR_ELEVATION_GEOMETRIC
     ): ZonedDateTime? {
         try {
-            // Convert to radians
             val latRad = Math.toRadians(latitude)
-            
-            // Calculate day of year
             val dayOfYear = date.dayOfYear
-            
-            // Solar declination (approximate)
             val declination = 23.45 * sin(Math.toRadians(360.0 * (284 + dayOfYear) / 365.0))
             val declRad = Math.toRadians(declination)
-            
-            // Hour angle
-            val hourAngle = acos(-tan(latRad) * tan(declRad))
+            val elevationRad = Math.toRadians(solarElevationDegrees)
+            // cos(hourAngle) = (sin(elevation) - sin(lat)*sin(decl)) / (cos(lat)*cos(decl)); 0° => -tan(lat)*tan(decl)
+            val cosHourAngle = (sin(elevationRad) - sin(latRad) * sin(declRad)) / (cos(latRad) * cos(declRad))
+            val hourAngle = when {
+                cosHourAngle >= 1.0 -> 0.0
+                cosHourAngle <= -1.0 -> PI
+                else -> acos(cosHourAngle.coerceIn(-1.0, 1.0))
+            }
             
             // Equation of time (approximate correction in minutes)
             val B = (360.0 / 365.0) * (dayOfYear - 81)

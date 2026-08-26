@@ -7,9 +7,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import com.experiencingyah.bibliCal.ui.components.CelButton
+import com.experiencingyah.bibliCal.ui.components.CelCard
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,10 +33,17 @@ fun PassagesIntegrationScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .safeDrawingPadding()
             .padding(20.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        CelCard(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
         Text(
             "PassAges Integration",
             style = MaterialTheme.typography.headlineSmall,
@@ -105,12 +114,14 @@ fun PassagesIntegrationScreen(
         Spacer(modifier = Modifier.height(12.dp))
 
         if (request !is PassagesRequest.Error) {
-            Button(onClick = onSend, modifier = Modifier.fillMaxWidth()) {
-                Text("Send to PassAges", color = MaterialTheme.colorScheme.onPrimary)
+            CelButton(onClick = onSend, modifier = Modifier.fillMaxWidth()) {
+                Text("Send to PassAges")
             }
         }
-        Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-            Text("Back to BibliCal", color = MaterialTheme.colorScheme.onPrimary)
+        CelButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+            Text("Back to BibliCal")
+        }
+            }
         }
     }
 }

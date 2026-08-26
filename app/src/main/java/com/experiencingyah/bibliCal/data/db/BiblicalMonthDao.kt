@@ -22,6 +22,22 @@ interface BiblicalMonthDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertMonthStart(entity: MonthStartEntity): Long
 
+    /**
+     * Removes confirmed month starts that are biblically after [year]/[month] and begin on or after [minEpochDay].
+     * Used when the user re-anchors a month so an orphaned next-year month 1 (from "start next month") does not win in [resolveFor].
+     */
+    @Query(
+        """
+        DELETE FROM month_starts
+        WHERE startEpochDay >= :minEpochDay
+        AND (
+            yearNumber > :year
+            OR (yearNumber = :year AND monthNumber > :month)
+        )
+        """,
+    )
+    suspend fun deleteLaterMonthStarts(year: Int, month: Int, minEpochDay: Long)
+
     @Query("DELETE FROM month_starts")
     suspend fun deleteAllMonthStarts()
 

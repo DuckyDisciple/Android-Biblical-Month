@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -23,8 +24,14 @@ class SettingsRepository(private val context: Context) {
         val INCLUDE_HANUKKAH = booleanPreferencesKey("include_hanukkah")
         val INCLUDE_PURIM = booleanPreferencesKey("include_purim")
         val SHOW_JERUSALEM_TIME = booleanPreferencesKey("show_jerusalem_time")
+        /** If true, countdown uses civil twilight end (-6°) instead of geometric sunset (0°). */
+        val USE_CIVIL_TWILIGHT_FOR_COUNTDOWN = booleanPreferencesKey("use_civil_twilight_for_countdown")
 
         val LAST_MOON_PROMPT_EPOCH_DAY = longPreferencesKey("last_moon_prompt_epoch_day")
+        /** Epoch day of the biblical month start for which the user last answered the moon prompt (day 29 and/or 30). */
+        val MOON_PROMPT_ACK_MONTH_START_EPOCH = longPreferencesKey("moon_prompt_ack_month_start_epoch")
+        /** Highest biblical day (29 or 30) answered for that month start. */
+        val MOON_PROMPT_ACK_COMPLETED_DAY = intPreferencesKey("moon_prompt_ack_completed_day")
         val LAST_AVIV_PROMPT_EPOCH_DAY = longPreferencesKey("last_aviv_prompt_epoch_day")
         val LAST_SHABBAT_REMINDER_EPOCH_DAY = longPreferencesKey("last_shabbat_reminder_epoch_day")
         val LAST_FEAST_REMINDER_EPOCH_DAY = longPreferencesKey("last_feast_reminder_epoch_day")
@@ -68,6 +75,9 @@ class SettingsRepository(private val context: Context) {
     val showJerusalemTime: Flow<Boolean> =
         context.dataStore.data.map { it[Keys.SHOW_JERUSALEM_TIME] ?: false }
 
+    val useCivilTwilightForCountdown: Flow<Boolean> =
+        context.dataStore.data.map { it[Keys.USE_CIVIL_TWILIGHT_FOR_COUNTDOWN] ?: true }
+
     suspend fun setStatusNotificationEnabled(enabled: Boolean) {
         context.dataStore.edit { it[Keys.STATUS_NOTIFICATION_ENABLED] = enabled }
     }
@@ -95,6 +105,19 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[Keys.LAST_MOON_PROMPT_EPOCH_DAY] = epochDay }
     }
 
+    suspend fun getMoonPromptAckMonthStartEpoch(): Long =
+        context.dataStore.data.first()[Keys.MOON_PROMPT_ACK_MONTH_START_EPOCH] ?: Long.MIN_VALUE
+
+    suspend fun getMoonPromptAckCompletedDay(): Int =
+        context.dataStore.data.first()[Keys.MOON_PROMPT_ACK_COMPLETED_DAY] ?: 0
+
+    suspend fun setMoonPromptAck(monthStartEpochDay: Long, completedThroughDay: Int) {
+        context.dataStore.edit {
+            it[Keys.MOON_PROMPT_ACK_MONTH_START_EPOCH] = monthStartEpochDay
+            it[Keys.MOON_PROMPT_ACK_COMPLETED_DAY] = completedThroughDay
+        }
+    }
+
     suspend fun getLastAvivPromptEpochDay(): Long =
         context.dataStore.data.first()[Keys.LAST_AVIV_PROMPT_EPOCH_DAY] ?: Long.MIN_VALUE
 
@@ -112,6 +135,10 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setShowJerusalemTime(enabled: Boolean) {
         context.dataStore.edit { it[Keys.SHOW_JERUSALEM_TIME] = enabled }
+    }
+
+    suspend fun setUseCivilTwilightForCountdown(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.USE_CIVIL_TWILIGHT_FOR_COUNTDOWN] = enabled }
     }
 
     suspend fun getLastShabbatReminderEpochDay(): Long =

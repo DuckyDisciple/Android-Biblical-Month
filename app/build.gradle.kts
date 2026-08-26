@@ -12,14 +12,14 @@ plugins {
 
 android {
     namespace = "com.experiencingyah.bibliCal"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.experiencingyah.bibliCal"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 7
-        versionName = "1.1"
+        targetSdk = 36
+        versionCode = 9
+        versionName = "1.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

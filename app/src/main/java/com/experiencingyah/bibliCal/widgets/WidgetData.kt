@@ -1,17 +1,13 @@
 package com.experiencingyah.bibliCal.widgets
 
-import android.Manifest
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
-import android.content.pm.PackageManager
-import android.location.Location
-import androidx.core.content.ContextCompat
 import com.experiencingyah.bibliCal.data.LunarRepository
 import com.experiencingyah.bibliCal.data.settings.SettingsRepository
 import com.experiencingyah.bibliCal.util.MonthNames
 import com.experiencingyah.bibliCal.util.SunsetCalculator
-import com.google.android.gms.location.LocationServices
+import com.experiencingyah.bibliCal.work.StatusUpdater
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
 import com.google.android.gms.tasks.Tasks
@@ -25,7 +21,6 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
-import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
 data class WidgetData(
@@ -58,47 +53,19 @@ object WidgetHelper {
     
     fun getWidgetData(context: Context): WidgetData = runBlocking {
         withContext(Dispatchers.IO) {
-            // Try to get location from cache first (fast and reliable for widgets)
+            // Use same location source as StatusUpdater for consistent sunset/day transition
             val settings = SettingsRepository(context)
-            val cachedLocation = try {
-                settings.getCachedLocation()
-            } catch (e: Exception) {
-                null
-            }
-            
-            val lat: Double
-            val lon: Double
-            
-            if (cachedLocation != null) {
-                lat = cachedLocation.first
-                lon = cachedLocation.second
-            } else {
-                // Cache miss or stale - try to get fresh location
-                val location = getLocationWithPermissions(context)
-                if (location != null) {
-                    lat = location.latitude
-                    lon = location.longitude
-                    // Cache the fresh location for next time
-                    try {
-                        settings.cacheLocation(lat, lon)
-                    } catch (e: Exception) {
-                        // Ignore caching errors
-                    }
-                } else {
-                    // Fallback to default coordinates
-                    lat = 40.0
-                    lon = -74.0
-                }
-            }
+            val (lat, lon) = StatusUpdater.getLocation(settings)
             val repo = LunarRepository(context)
             
-            // Calculate sunset dates FIRST to determine which Gregorian date to use
             val todayDate = LocalDate.now()
             val zoneId = ZoneId.systemDefault()
-            
-            val todaySunset = SunsetCalculator.calculateSunsetTime(todayDate, lat, lon, zoneId)
-            val tomorrowSunset = SunsetCalculator.calculateSunsetTime(todayDate.plusDays(1), lat, lon, zoneId)
-            
+            val useCivilTwilight = settings.useCivilTwilightForCountdown.first()
+            val elevation = if (useCivilTwilight) SunsetCalculator.SOLAR_ELEVATION_CIVIL_TWILIGHT else SunsetCalculator.SOLAR_ELEVATION_GEOMETRIC
+
+            val todaySunset = SunsetCalculator.calculateSunsetTime(todayDate, lat, lon, zoneId, elevation)
+            val tomorrowSunset = SunsetCalculator.calculateSunsetTime(todayDate.plusDays(1), lat, lon, zoneId, elevation)
+
             val now = ZonedDateTime.now(zoneId)
             val isAfterTodaySunset = todaySunset != null && now.isAfter(todaySunset)
             
@@ -150,70 +117,47 @@ object WidgetHelper {
                 todayDate.format(DateTimeFormatter.ISO_LOCAL_DATE)
             }
             
-            // Calculate Shabbat info
-            val isShabbat = isCurrentlyShabbat(now, todayDate, lat, lon)
+            val isShabbat = isCurrentlyShabbat(now, todayDate, lat, lon, elevation)
             val shabbatLabel = if (isShabbat) "" else "Until Shabbat"
-            val shabbatText = if (isShabbat) "Shabbat\nShalom" else calculateShabbatCountdown(lat, lon)
+            val shabbatText = if (isShabbat) "Shabbat\nShalom" else calculateShabbatCountdown(lat, lon, elevation)
             
             WidgetData(lunarText, gregorianText, shabbatText, shabbatLabel, isShabbat)
         }
     }
     
-    private fun isCurrentlyShabbat(now: ZonedDateTime, today: LocalDate, latitude: Double, longitude: Double): Boolean {
-        // Shabbat is from Friday sunset to Saturday sunset
+    private fun isCurrentlyShabbat(now: ZonedDateTime, today: LocalDate, latitude: Double, longitude: Double, solarElevationDegrees: Double): Boolean {
         val zoneId = ZoneId.systemDefault()
-        
-        // Check if it's Friday after sunset
         if (today.dayOfWeek == DayOfWeek.FRIDAY) {
-            val fridaySunset = SunsetCalculator.calculateSunsetTime(today, latitude, longitude, zoneId)
+            val fridaySunset = SunsetCalculator.calculateSunsetTime(today, latitude, longitude, zoneId, solarElevationDegrees)
                 ?: today.atTime(18, 0).atZone(zoneId)
-            if (now.isAfter(fridaySunset)) {
-                return true
-            }
+            if (now.isAfter(fridaySunset)) return true
         }
-        
-        // Check if it's Saturday before sunset
         if (today.dayOfWeek == DayOfWeek.SATURDAY) {
-            val saturdaySunset = SunsetCalculator.calculateSunsetTime(today, latitude, longitude, zoneId)
+            val saturdaySunset = SunsetCalculator.calculateSunsetTime(today, latitude, longitude, zoneId, solarElevationDegrees)
                 ?: today.atTime(18, 0).atZone(zoneId)
             val yesterday = today.minusDays(1)
-            val fridaySunset = SunsetCalculator.calculateSunsetTime(yesterday, latitude, longitude, zoneId)
+            val fridaySunset = SunsetCalculator.calculateSunsetTime(yesterday, latitude, longitude, zoneId, solarElevationDegrees)
                 ?: yesterday.atTime(18, 0).atZone(zoneId)
-            
             return now.isAfter(fridaySunset) && now.isBefore(saturdaySunset)
         }
-        
         return false
     }
-    
-    private fun calculateShabbatCountdown(latitude: Double, longitude: Double): String {
-        // Use the same timezone handling as Today screen
+
+    private fun calculateShabbatCountdown(latitude: Double, longitude: Double, solarElevationDegrees: Double): String {
         val zoneId = ZoneId.systemDefault()
-        val timeZoneString = zoneId.id
-        val zoneIdFromString = ZoneId.of(timeZoneString)
-        val now = ZonedDateTime.now(zoneIdFromString)
+        val now = ZonedDateTime.now(zoneId)
         val today = now.toLocalDate()
-        
-        // Find next Friday
         val daysUntilFriday = (DayOfWeek.FRIDAY.value - today.dayOfWeek.value + 7) % 7
         val nextFriday = if (daysUntilFriday == 0 && today.dayOfWeek == DayOfWeek.FRIDAY) {
-            // If it's Friday, check if we're before sunset - if so, use today, else next Friday
-            val fridaySunset = SunsetCalculator.calculateSunsetTime(today, latitude, longitude, zoneIdFromString)
-            if (fridaySunset != null && now.isBefore(fridaySunset)) {
-                today
-            } else {
-                today.plusDays(7)
-            }
+            val fridaySunset = SunsetCalculator.calculateSunsetTime(today, latitude, longitude, zoneId, solarElevationDegrees)
+            if (fridaySunset != null && now.isBefore(fridaySunset)) today else today.plusDays(7)
         } else {
             today.plusDays(daysUntilFriday.toLong())
         }
+        val fridaySunset = SunsetCalculator.calculateSunsetTime(nextFriday, latitude, longitude, zoneId, solarElevationDegrees)
+            ?: nextFriday.atTime(18, 0).atZone(zoneId) // Fallback to 6 PM
         
-        // Calculate sunset time for Friday using the same method as Today screen
-        // This matches exactly how the Today screen calculates sunset times
-        val fridaySunset = SunsetCalculator.calculateSunsetTime(nextFriday, latitude, longitude, zoneIdFromString)
-            ?: nextFriday.atTime(18, 0).atZone(zoneIdFromString) // Fallback to 6 PM
-        
-        // Both now and fridaySunset are in the same timezone (zoneIdFromString)
+        // Both now and fridaySunset are in the same timezone (zoneId)
         // Calculate duration directly
         val duration = Duration.between(now, fridaySunset)
         val totalSeconds = duration.seconds
@@ -242,68 +186,6 @@ object WidgetHelper {
                 "${days}d ${hours}h"
             }
         }
-    }
-    
-    /**
-     * Get location with proper permission checks.
-     * Widgets run in a restricted context, so we need to check permissions first.
-     * Tries getCurrentLocation first, then falls back to lastKnownLocation.
-     */
-    private fun getLocationWithPermissions(context: Context): Location? {
-        // Check if location permissions are granted
-        val hasFineLocation = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-        
-        val hasCoarseLocation = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-        
-        if (!hasFineLocation && !hasCoarseLocation) {
-            return null
-        }
-        
-        val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
-        
-        // First, try to get current location
-        try {
-            val cancellationTokenSource = CancellationTokenSource()
-            val locationTask = fusedLocationClient.getCurrentLocation(
-                Priority.PRIORITY_BALANCED_POWER_ACCURACY,
-                cancellationTokenSource.token
-            )
-            // Increase timeout to 10 seconds for better chance of getting location
-            val location = Tasks.await(locationTask, 10, TimeUnit.SECONDS)
-            if (location != null) {
-                return location
-            }
-        } catch (e: SecurityException) {
-            // Permission issue
-        } catch (e: Exception) {
-            // Ignore and try last known location
-        }
-        
-        // Fallback to last known location
-        try {
-            val lastLocationTask = fusedLocationClient.lastLocation
-            val lastLocation = Tasks.await(lastLocationTask, 2, TimeUnit.SECONDS)
-            if (lastLocation != null) {
-                // Check if last location is recent (within 1 hour)
-                val ageMillis = System.currentTimeMillis() - lastLocation.time
-                val ageHours = ageMillis / (1000 * 60 * 60)
-                if (ageHours < 1) {
-                    return lastLocation
-                }
-            }
-        } catch (e: SecurityException) {
-            // Permission issue
-        } catch (e: Exception) {
-            // Ignore
-        }
-        
-        return null
     }
 }
 

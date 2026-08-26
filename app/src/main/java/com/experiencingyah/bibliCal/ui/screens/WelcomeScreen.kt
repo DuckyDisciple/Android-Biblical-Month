@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.location.Location
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,13 +14,23 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import com.experiencingyah.bibliCal.R
+import com.experiencingyah.bibliCal.data.LunarRepository
+import com.experiencingyah.bibliCal.data.settings.SettingsRepository
+import com.experiencingyah.bibliCal.ui.components.BrandTopBar
+import com.experiencingyah.bibliCal.ui.components.CelButton
+import com.experiencingyah.bibliCal.ui.components.CelCard
+import com.experiencingyah.bibliCal.ui.vm.WelcomeStep
+import com.experiencingyah.bibliCal.ui.vm.WelcomeViewModel
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -31,15 +42,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
-import com.experiencingyah.bibliCal.data.LunarRepository
-import com.experiencingyah.bibliCal.data.settings.SettingsRepository
-import com.experiencingyah.bibliCal.ui.vm.WelcomeStep
-import com.experiencingyah.bibliCal.ui.vm.WelcomeViewModel
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
@@ -134,19 +139,17 @@ fun WelcomeScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
-        Spacer(Modifier.height(32.dp))
-        
-        Text(
-            text = "Welcome!",
-            style = MaterialTheme.typography.headlineLarge,
-            textAlign = TextAlign.Center
+        Spacer(Modifier.height(16.dp))
+
+        Image(
+            painter = painterResource(R.drawable.character_welcome),
+            contentDescription = null,
+            modifier = Modifier.size(160.dp),
         )
-        
-        Text(
-            text = "Let's set up your biblical calendar",
-            style = MaterialTheme.typography.bodyLarge,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+
+        BrandTopBar(
+            title = "Welcome!",
+            subtitle = "Let's set up your biblical calendar",
         )
         
         Spacer(Modifier.height(16.dp))
@@ -247,11 +250,9 @@ fun WelcomeScreen(
         }
         
         state.errorMessage?.let { error ->
-            Card(
+            CelCard(
                 modifier = Modifier.fillMaxWidth(),
-                colors = androidx.compose.material3.CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer
-                )
+                containerColor = MaterialTheme.colorScheme.errorContainer,
             ) {
                 Text(
                     text = error,
@@ -334,7 +335,7 @@ private fun Step1KnowBiblicalDate(
     onYes: () -> Unit,
     onNo: () -> Unit
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    CelCard(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -355,18 +356,18 @@ private fun Step1KnowBiblicalDate(
             
             Spacer(Modifier.height(8.dp))
             
-            Button(
+            CelButton(
                 onClick = onYes,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Yes, I know the date", color = androidx.compose.ui.graphics.Color.White)
+                Text("Yes, I know the date")
             }
             
-            Button(
+            CelButton(
                 onClick = onNo,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("No, I don't know", color = androidx.compose.ui.graphics.Color.White)
+                Text("No, I don't know")
             }
         }
     }
@@ -377,7 +378,7 @@ private fun Step2KnowNewMoonDate(
     onYes: () -> Unit,
     onNo: () -> Unit
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    CelCard(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -398,18 +399,18 @@ private fun Step2KnowNewMoonDate(
             
             Spacer(Modifier.height(8.dp))
             
-            Button(
+            CelButton(
                 onClick = onYes,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Yes, I know the date", color = androidx.compose.ui.graphics.Color.White)
+                Text("Yes, I know the date")
             }
             
-            Button(
+            CelButton(
                 onClick = onNo,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("No, I don't know", color = androidx.compose.ui.graphics.Color.White)
+                Text("No, I don't know")
             }
         }
     }
@@ -437,7 +438,7 @@ private fun Step3EstimateFromLocation(
         repo.calculateDefaultYearForMonth(displayMonth, baseDate)
     }
     
-    Card(modifier = Modifier.fillMaxWidth()) {
+    CelCard(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -468,18 +469,18 @@ private fun Step3EstimateFromLocation(
                     
                     Spacer(Modifier.height(8.dp))
                     
-                    Button(
+                    CelButton(
                         onClick = onGrantLocationPermission,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Grant Location Access", color = androidx.compose.ui.graphics.Color.White)
+                        Text("Grant Location Access")
                     }
                     
-                    Button(
+                    CelButton(
                         onClick = onSetManually,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Set date manually instead", color = androidx.compose.ui.graphics.Color.White)
+                        Text("Set date manually instead")
                     }
                 }
                 
@@ -549,21 +550,20 @@ private fun Step3EstimateFromLocation(
                     
                     Spacer(Modifier.height(8.dp))
                     
-                    Button(
+                    CelButton(
                         onClick = {
-                            // Use the edited biblical date (year, month, day)
                             onUseEstimate(displayYear, displayMonth, displayDay)
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Use this estimate", color = androidx.compose.ui.graphics.Color.White)
+                        Text("Use this estimate")
                     }
                     
-                    Button(
+                    CelButton(
                         onClick = onSetManually,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Set date manually instead", color = androidx.compose.ui.graphics.Color.White)
+                        Text("Set date manually instead")
                     }
                 }
                 
@@ -574,11 +574,11 @@ private fun Step3EstimateFromLocation(
                         textAlign = TextAlign.Center
                     )
                     
-                    Button(
+                    CelButton(
                         onClick = onSetManually,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Set date manually", color = androidx.compose.ui.graphics.Color.White)
+                        Text("Set date manually")
                     }
                 }
             }

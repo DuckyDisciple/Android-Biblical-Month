@@ -60,11 +60,13 @@ class LunarRepository(context: Context) {
     }
 
     suspend fun setAnchor(year: Int, month: Int, startDate: LocalDate) {
+        val epoch = startDate.toEpochDay()
+        dao.deleteLaterMonthStarts(year = year, month = month, minEpochDay = epoch)
         dao.upsertMonthStart(
             MonthStartEntity(
                 yearNumber = year,
                 monthNumber = month,
-                startEpochDay = startDate.toEpochDay(),
+                startEpochDay = epoch,
                 confirmed = true,
             )
         )

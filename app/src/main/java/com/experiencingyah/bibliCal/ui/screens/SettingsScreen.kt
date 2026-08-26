@@ -3,11 +3,11 @@ package com.experiencingyah.bibliCal.ui.screens
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.location.Location
 import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,10 +20,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import com.experiencingyah.bibliCal.ui.components.CelCard
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -44,16 +44,25 @@ import com.google.android.gms.tasks.Tasks
 import com.experiencingyah.bibliCal.calendar.AllDayCalendarEvent
 import com.experiencingyah.bibliCal.calendar.CalendarExporter
 import com.experiencingyah.bibliCal.data.LunarRepository
+import com.experiencingyah.bibliCal.util.SunsetCalculator
 import com.experiencingyah.bibliCal.data.settings.SettingsRepository
 import com.experiencingyah.bibliCal.integrations.PassagesIntegration
+import com.experiencingyah.bibliCal.work.StatusUpdater
 import com.experiencingyah.bibliCal.ui.vm.SettingsViewModel
 import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
+fun SettingsScreen(
+    vm: SettingsViewModel = viewModel(),
+    onNavigateToRecommendedResources: () -> Unit = {},
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val state by vm.state.collectAsState()
@@ -110,7 +119,27 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
     ) {
         Text("Settings", style = MaterialTheme.typography.headlineSmall)
 
-        Card(modifier = Modifier.fillMaxWidth()) {
+        CelCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onNavigateToRecommendedResources),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Recommended Resources", style = MaterialTheme.typography.titleMedium)
+                    Text("Telescopes, study guides, and more for moon sighting.", style = MaterialTheme.typography.bodySmall)
+                }
+                Text("→", style = MaterialTheme.typography.titleMedium)
+            }
+        }
+
+        CelCard(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -134,7 +163,7 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
                         notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                     }
                 }) {
-                    Text("Grant notification permission", color = androidx.compose.ui.graphics.Color.White)
+                    Text("Grant notification permission", color = MaterialTheme.colorScheme.onPrimary)
                 }
 
                 HorizontalDivider()
@@ -198,6 +227,22 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
 
                 HorizontalDivider()
 
+                // Sunset: when the biblical day transitions
+                Text("Sunset", style = MaterialTheme.typography.titleLarge)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                        Text("Use Civil Twilight", style = MaterialTheme.typography.titleMedium)
+                        Text("Enabled - transition day when it gets dark. Disabled - transition day when sun is at the horizon.", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Switch(checked = state.useCivilTwilightForCountdown, onCheckedChange = { vm.setUseCivilTwilightForCountdown(it) })
+                }
+
+                HorizontalDivider()
+
                 // PassAges Sync Section
                 Text("PassAges", style = MaterialTheme.typography.titleLarge)
                 Text("Send the current week to PassAges.", style = MaterialTheme.typography.bodySmall)
@@ -233,7 +278,7 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
                             }
                         }
                     }
-                ) { Text("Sync with PassAges", color = androidx.compose.ui.graphics.Color.White) }
+                ) { Text("Sync with PassAges", color = MaterialTheme.colorScheme.onPrimary) }
                 passagesSyncStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
 
                 HorizontalDivider()
@@ -256,7 +301,7 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
                         }
                     }
                 ) {
-                    Text("Set Current Date", color = androidx.compose.ui.graphics.Color.White)
+                    Text("Set Current Date", color = MaterialTheme.colorScheme.onPrimary)
                 }
                 if (!state.hasAnchor) {
                     Text(
@@ -281,7 +326,7 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
                     Button(onClick = {
                         val perms = arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
                         calendarPermLauncher.launch(perms)
-                    }) { Text("Grant Calendar Permission", color = androidx.compose.ui.graphics.Color.White) }
+                    }) { Text("Grant Calendar Permission", color = MaterialTheme.colorScheme.onPrimary) }
                 } else {
                     // Permission granted - show calendar selection and export options
                     Button(onClick = {
@@ -291,7 +336,7 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
                         Text(
                             if (state.selectedCalendarId == -1L) "Pick a calendar" 
                             else "Calendar ID: ${state.selectedCalendarId}", 
-                            color = androidx.compose.ui.graphics.Color.White
+                            color = MaterialTheme.colorScheme.onPrimary
                         ) 
                     }
 
@@ -332,7 +377,7 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
                                     exportStatus = "Exported $created events for Year $year."
                                 }
                             }
-                        ) { Text("Export current year feasts", color = androidx.compose.ui.graphics.Color.White) }
+                        ) { Text("Export current year feasts", color = MaterialTheme.colorScheme.onPrimary) }
 
                         Button(
                             modifier = Modifier.fillMaxWidth(),
@@ -358,7 +403,7 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
                                     exportStatus = "Exported $created events for Year $year."
                                 }
                             }
-                        ) { Text("Export next year feasts", color = androidx.compose.ui.graphics.Color.White) }
+                        ) { Text("Export next year feasts", color = MaterialTheme.colorScheme.onPrimary) }
                     }
                     
                     if (state.selectedCalendarId == -1L) {
@@ -395,59 +440,70 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
     }
     
     LaunchedEffect(showDatePicker) {
-        if (showDatePicker) {
+        if (!showDatePicker) return@LaunchedEffect
+        val data = withContext(Dispatchers.IO) {
             val repo = LunarRepository(context)
-            val today = repo.getToday()
-            val year = today?.yearNumber ?: selectedYear
-            val month = today?.monthNumber ?: selectedMonth
-            val day = today?.dayOfMonth ?: selectedDay
-            
-            datePickerState = Triple(year, month, day)
-            
-            // Get sunset info
-            val todayDate = java.time.LocalDate.now()
-            val zoneId = java.time.ZoneId.systemDefault()
-            val cached = settingsRepo.getCachedLocation()
-            val cachedLocation = cached?.let {
-                Location("cached").apply {
-                    latitude = it.first
-                    longitude = it.second
-                }
+            // Match Today screen: biblical "today" uses sunset/twilight + reference Gregorian day
+            val lunar = StatusUpdater.resolveCurrentBiblicalLunarDate(repo, settingsRepo)
+            val year = lunar?.yearNumber ?: selectedYear
+            val month = lunar?.monthNumber ?: selectedMonth
+            val day = lunar?.dayOfMonth ?: selectedDay
+
+            val todayDate = LocalDate.now()
+            val zoneId = ZoneId.systemDefault()
+            val useCivil = settingsRepo.useCivilTwilightForCountdown.first()
+            val elevation = if (useCivil) {
+                SunsetCalculator.SOLAR_ELEVATION_CIVIL_TWILIGHT
+            } else {
+                SunsetCalculator.SOLAR_ELEVATION_GEOMETRIC
+            }
+
+            var lat = 40.0
+            var lon = -74.0
+            settingsRepo.getCachedLocation()?.let {
+                lat = it.first
+                lon = it.second
             }
             try {
-                val fusedLocationClient = com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(context)
+                val fusedLocationClient =
+                    com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(context)
                 val cancellationTokenSource = com.google.android.gms.tasks.CancellationTokenSource()
                 val locationTask = fusedLocationClient.getCurrentLocation(
                     com.google.android.gms.location.Priority.PRIORITY_BALANCED_POWER_ACCURACY,
-                    cancellationTokenSource.token
+                    cancellationTokenSource.token,
                 )
-                val location = Tasks.await(locationTask, 5, java.util.concurrent.TimeUnit.SECONDS)
-                val locationToUse = location ?: cachedLocation
-                
-                if (locationToUse != null) {
-                    val todaySunset = com.experiencingyah.bibliCal.util.SunsetCalculator.calculateSunsetTime(
-                        todayDate, locationToUse.latitude, locationToUse.longitude, zoneId
-                    )
-                    val now = java.time.ZonedDateTime.now(zoneId)
-                    val isAfterSunset = todaySunset != null && now.isAfter(todaySunset)
-                    val daytimeDate = if (isAfterSunset) {
-                        todayDate.plusDays(1).toString()
-                    } else {
-                        todayDate.toString()
-                    }
-                    val sunsetDate = if (isAfterSunset) {
-                        todayDate.toString()
-                    } else {
-                        todayDate.minusDays(1).toString()
-                    }
-                    datePickerSunsetInfo = Triple(isAfterSunset, daytimeDate, sunsetDate)
-                } else {
-                    datePickerSunsetInfo = Triple(false, todayDate.toString(), todayDate.minusDays(1).toString())
+                val fused = Tasks.await(locationTask, 5, TimeUnit.SECONDS)
+                if (fused != null) {
+                    lat = fused.latitude
+                    lon = fused.longitude
                 }
-            } catch (e: Exception) {
-                datePickerSunsetInfo = Triple(false, todayDate.toString(), todayDate.minusDays(1).toString())
+            } catch (_: Exception) {
+                // keep cached or default
             }
+
+            val todaySunset = SunsetCalculator.calculateSunsetTime(
+                todayDate,
+                lat,
+                lon,
+                zoneId,
+                elevation,
+            )
+            val now = ZonedDateTime.now(zoneId)
+            val isAfterSunset = todaySunset != null && now.isAfter(todaySunset)
+            val daytimeDate = if (isAfterSunset) {
+                todayDate.plusDays(1).toString()
+            } else {
+                todayDate.toString()
+            }
+            val sunsetDate = if (isAfterSunset) {
+                todayDate.toString()
+            } else {
+                todayDate.minusDays(1).toString()
+            }
+            Pair(Triple(year, month, day), Triple(isAfterSunset, daytimeDate, sunsetDate))
         }
+        datePickerState = data.first
+        datePickerSunsetInfo = data.second
     }
     
     if (showDatePicker && datePickerState != null) {

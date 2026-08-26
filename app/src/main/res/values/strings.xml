@@ -8,6 +8,13 @@
     <string name="notification_channel_status_name">BibliCal Status</string>
     <string name="notification_channel_prompts_name">BibliCal Prompts</string>
 
+    <string name="moon_prompt_notification_title">New moon sighting</string>
+    <string name="moon_prompt_notification_summary">Was it seen? (Biblical day %1$d)</string>
+    <string name="moon_prompt_notification_big_text">Day 29: Seen → new month tomorrow; Not Seen → this month has 30 days. Day 30 (after sunset): Seen → new month began today; Not Seen → new month tomorrow.</string>
+    <string name="moon_prompt_action_seen">Seen</string>
+    <string name="moon_prompt_action_not_seen">Not Seen</string>
+    <string name="moon_prompt_action_later">Later</string>
+
     <string name="widget_title">BibliCal</string>
     
     <string name="widget_today_description">Date and Shabbat countdown</string>

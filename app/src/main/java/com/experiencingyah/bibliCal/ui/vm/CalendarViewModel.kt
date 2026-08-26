@@ -19,6 +19,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import java.util.Locale
 
 data class DayCell(
@@ -26,6 +27,8 @@ data class DayCell(
     val lunarDay: Int,
     val isToday: Boolean,
     val feastTitles: List<String>,
+    /** Inclusive from Firstfruits (1) through Shavuot (50); null outside that range. */
+    val omerDay: Int? = null,
 )
 
 data class ProjectedMonthInfo(
@@ -44,6 +47,8 @@ data class CalendarUiState(
     val projectedMonths: Map<Pair<Int, Int>, Int> = emptyMap(), // (year, month) -> 29 or 30
     val projectedMonthInfos: List<ProjectedMonthInfo> = emptyList(), // List of projected months with names
     val currentMonthProjectedLength: Int? = null, // Projected length for current month (29 or 30)
+    /** True until the first calendar month payload is ready (empty grid is shown as skeleton). */
+    val isCalendarLoading: Boolean = true,
 )
 
 class CalendarViewModel(app: Application) : AndroidViewModel(app) {
@@ -79,6 +84,7 @@ class CalendarViewModel(app: Application) : AndroidViewModel(app) {
                 _state.value = CalendarUiState(
                     title = "Calendar",
                     subtitle = "Set an anchor on the Today tab to begin.",
+                    isCalendarLoading = false,
                 )
             }
         }
@@ -110,6 +116,7 @@ class CalendarViewModel(app: Application) : AndroidViewModel(app) {
                 _state.value = CalendarUiState(
                     title = "Calendar",
                     subtitle = "Set an anchor on the Today tab to begin.",
+                    isCalendarLoading = false,
                 )
             }
         }
@@ -179,6 +186,7 @@ class CalendarViewModel(app: Application) : AndroidViewModel(app) {
                 _state.value = CalendarUiState(
                     title = "Calendar",
                     subtitle = "Missing month data; try setting an anchor.",
+                    isCalendarLoading = false,
                 )
                 return@launch
             }
@@ -234,6 +242,15 @@ class CalendarViewModel(app: Application) : AndroidViewModel(app) {
                 feasts = feasts + FeastDay("Purim (14/12)", purimDate, y, 12, 14)
             }
             val feastByDate = feasts.groupBy { it.date }.mapValues { it.value.map(FeastDay::title) }
+
+            val omerFirst = feasts.firstOrNull { it.title == "Firstfruits" }?.date
+            val omerLast = feasts.firstOrNull { it.title.contains("Shavuot", ignoreCase = true) }?.date
+            fun omerDayFor(g: LocalDate): Int? {
+                val first = omerFirst ?: return null
+                val last = omerLast ?: return null
+                if (g.isBefore(first) || g.isAfter(last)) return null
+                return ChronoUnit.DAYS.between(first, g).toInt() + 1
+            }
             
             // Filter feasts that fall within this month
             val feastsInMonth = feasts.filter { it.date >= monthStart && it.date <= monthEnd }
@@ -294,6 +311,7 @@ class CalendarViewModel(app: Application) : AndroidViewModel(app) {
                     lunarDay = offset + 1,
                     isToday = g == dateToUseForToday,
                     feastTitles = feastByDate[g].orEmpty(),
+                    omerDay = omerDayFor(g),
                 )
             }
 
@@ -307,6 +325,7 @@ class CalendarViewModel(app: Application) : AndroidViewModel(app) {
                 projectedMonths = projectedMonthsMap,
                 projectedMonthInfos = projectedMonthInfos,
                 currentMonthProjectedLength = currentProjectedLength,
+                isCalendarLoading = false,
             )
         }
     }

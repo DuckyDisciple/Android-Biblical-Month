@@ -25,15 +25,20 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import com.experiencingyah.bibliCal.R
+import com.experiencingyah.bibliCal.data.LunarRepository
+import com.experiencingyah.bibliCal.ui.components.CelButton
+import com.experiencingyah.bibliCal.ui.components.CelCard
+import com.experiencingyah.bibliCal.ui.components.EmptyStateView
+import com.experiencingyah.bibliCal.ui.components.SectionHeader
+import com.experiencingyah.bibliCal.ui.vm.TodayViewModel
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.foundation.clickable
@@ -51,8 +56,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.experiencingyah.bibliCal.data.LunarRepository
-import com.experiencingyah.bibliCal.ui.vm.TodayViewModel
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
@@ -124,7 +127,45 @@ fun TodayScreen(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Today", style = MaterialTheme.typography.headlineMedium)
+        Text("Today", style = MaterialTheme.typography.displaySmall)
+
+        if (!state.isLoading && state.showNextMonthButton) {
+            val day = state.currentDayOfMonth
+            CelCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    SectionHeader("Was the new moon seen?")
+                    Text(
+                        when (day) {
+                            29 -> "Day 29: Seen → new month tomorrow. Not Seen → this month has 30 days."
+                            30 -> "Day 30 (after sunset): Seen → new month began today. Not Seen → new month tomorrow."
+                            else -> "Choose whether the new moon was seen for this month."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        CelButton(
+                            onClick = { vm.confirmMoonSeenOnDay29(day) },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Seen")
+                        }
+                        CelButton(
+                            onClick = { vm.confirmMoonNotSeenOnDay29(day) },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Not Seen")
+                        }
+                    }
+                }
+            }
+        }
 
         // Location permission rationale banner
         if (showLocationRationale) {
@@ -155,7 +196,7 @@ fun TodayScreen(
             SkeletonCard()
             SkeletonCard()
         } else {
-            Card(modifier = Modifier.fillMaxWidth()) {
+            CelCard(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -194,23 +235,19 @@ fun TodayScreen(
                             }
                             showDatePicker = true 
                         }) {
-                            Text("Set Current Date", color = androidx.compose.ui.graphics.Color.White)
-                        }
-                    } else if (state.showNextMonthButton) {
-                        Button(onClick = { vm.confirmNextMonthStartsTomorrow() }) {
-                            Text("Renewed Moon Sighted: Next Month Starts at Sundown", color = androidx.compose.ui.graphics.Color.White)
+                            Text("Set Current Date")
                         }
                     }
                 }
             }
 
             // Sunset countdown
-            Card(modifier = Modifier.fillMaxWidth()) {
+            CelCard(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text("Next Day Starts", style = MaterialTheme.typography.titleMedium)
+                    SectionHeader("Next Day Starts")
                     if (state.isLoadingSunset || state.sunsetInfo == null) {
                         Text("Loading Sunset Data...", style = MaterialTheme.typography.bodyMedium)
                     } else {
@@ -247,12 +284,12 @@ fun TodayScreen(
 
             // Jerusalem Time card
             state.jerusalemTimeInfo?.let { jerusalemInfo ->
-                Card(modifier = Modifier.fillMaxWidth()) {
+                CelCard(modifier = Modifier.fillMaxWidth()) {
                     Column(
                         modifier = Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text("Jerusalem Time", style = MaterialTheme.typography.titleMedium)
+                        SectionHeader("Jerusalem Time")
                         
                         // Current time in Jerusalem
                         var displayCurrentTime by remember { mutableStateOf(jerusalemInfo.currentTime.format(DateTimeFormatter.ofPattern("h:mm:ss a"))) }
@@ -288,17 +325,21 @@ fun TodayScreen(
 
         // Upcoming feasts
         if (!state.isLoading) {
-            Card(modifier = Modifier.fillMaxWidth()) {
+            CelCard(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text("Upcoming Feasts (30 days)", style = MaterialTheme.typography.titleMedium)
+                    SectionHeader("Upcoming Feasts (30 days)")
                     Divider()
                     if (state.isLoadingFeasts) {
                         Text("Loading Feast Data...", style = MaterialTheme.typography.bodyMedium)
                     } else if (state.upcomingFeasts.isEmpty()) {
-                        Text("No upcoming feasts in the next 30 days", style = MaterialTheme.typography.bodyMedium)
+                        EmptyStateView(
+                            title = "No upcoming feasts",
+                            subtitle = "Nothing in the next 30 days",
+                            imageRes = R.drawable.character_empty,
+                        )
                     } else {
                         state.upcomingFeasts.take(10).forEach { feast ->
                             Row(
@@ -452,12 +493,12 @@ fun DatePickerDialog(
                 val parsedDay = dayText.toIntOrNull()?.coerceIn(1, 30) ?: 1
                 onConfirm(parsedYear, parsedMonth, parsedDay)
             }) {
-                Text("Set", color = androidx.compose.ui.graphics.Color.White)
+                Text("Set")
             }
         },
         dismissButton = {
             Button(onClick = onDismiss) {
-                Text("Cancel", color = androidx.compose.ui.graphics.Color.White)
+                Text("Cancel")
             }
         }
     )
@@ -468,11 +509,9 @@ private fun LocationPermissionBanner(
     onGrantPermission: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    Card(
+    CelCard(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer
-        )
+        containerColor = MaterialTheme.colorScheme.secondaryContainer,
     ) {
         Column(
             modifier = Modifier
@@ -517,7 +556,7 @@ private fun LocationPermissionBanner(
                 onClick = onGrantPermission,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Grant Location Access", color = androidx.compose.ui.graphics.Color.White)
+                Text("Grant Location Access")
             }
         }
     }
@@ -528,13 +567,11 @@ private fun WidgetPromoBanner(
     onTap: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    Card(
+    CelCard(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onTap() },
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer
-        )
+        containerColor = MaterialTheme.colorScheme.primaryContainer,
     ) {
         Row(
             modifier = Modifier
@@ -582,7 +619,7 @@ private fun SkeletonCard() {
         label = "skeleton_alpha"
     )
     
-    Card(
+    CelCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(

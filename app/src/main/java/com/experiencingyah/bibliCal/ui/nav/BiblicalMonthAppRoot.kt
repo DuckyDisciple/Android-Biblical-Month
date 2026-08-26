@@ -1,15 +1,26 @@
 package com.experiencingyah.bibliCal.ui.nav
 
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Today
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.ui.unit.dp
+import com.experiencingyah.bibliCal.ui.theme.BibliCalThemeTokens
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -28,6 +39,7 @@ import com.experiencingyah.bibliCal.data.LunarRepository
 import com.experiencingyah.bibliCal.ui.screens.CalendarScreen
 import com.experiencingyah.bibliCal.ui.screens.PassagesIntegrationScreen
 import com.experiencingyah.bibliCal.ui.screens.PassagesRequest
+import com.experiencingyah.bibliCal.ui.screens.RecommendedResourcesScreen
 import com.experiencingyah.bibliCal.ui.screens.SettingsScreen
 import com.experiencingyah.bibliCal.ui.screens.TodayScreen
 import com.experiencingyah.bibliCal.ui.screens.WelcomeScreen
@@ -74,13 +86,25 @@ fun BiblicalMonthAppRoot(
         NavItem("settings", "Settings", Icons.Default.Settings),
     )
 
-    // Only show bottom bar if not on welcome or widget showcase screens
-    val showBottomBar = currentRoute != "welcome" && currentRoute != "widget_showcase" && currentRoute != null
+    // Only show bottom bar if not on welcome, widget showcase, or recommended resources screens
+    val showBottomBar = currentRoute != "welcome" && currentRoute != "widget_showcase" && currentRoute != "recommended_resources" && currentRoute != null
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets.safeDrawing.only(
+            WindowInsetsSides.Horizontal + WindowInsetsSides.Top
+        ),
         bottomBar = {
             if (showBottomBar) {
-                NavigationBar {
+                Column {
+                    HorizontalDivider(
+                        thickness = 1.dp,
+                        color = BibliCalThemeTokens.colors.outlineSoft,
+                    )
+                    NavigationBar(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        tonalElevation = 0.dp,
+                    ) {
                     items.forEach { item ->
                         val selected = currentRoute == item.route
                         NavigationBarItem(
@@ -95,8 +119,16 @@ fun BiblicalMonthAppRoot(
                                 }
                             },
                             icon = { Icon(item.icon, contentDescription = item.label) },
-                            label = { Text(item.label) }
+                            label = { Text(item.label) },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = MaterialTheme.colorScheme.primary,
+                                selectedTextColor = MaterialTheme.colorScheme.primary,
+                                indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            ),
                         )
+                    }
                     }
                 }
             }
@@ -107,7 +139,9 @@ fun BiblicalMonthAppRoot(
             NavHost(
                 navController = navController,
                 startDestination = destination,
-                modifier = Modifier.padding(innerPadding),
+                modifier = Modifier
+                    .padding(innerPadding)
+                    .consumeWindowInsets(innerPadding),
             ) {
                 composable("welcome") { WelcomeScreen(navController = navController) }
                 composable("today") { 
@@ -116,7 +150,16 @@ fun BiblicalMonthAppRoot(
                     ) 
                 }
                 composable("calendar") { CalendarScreen() }
-                composable("settings") { SettingsScreen() }
+                composable("settings") {
+                    SettingsScreen(
+                        onNavigateToRecommendedResources = { navController.navigate("recommended_resources") }
+                    )
+                }
+                composable("recommended_resources") {
+                    RecommendedResourcesScreen(
+                        onNavigateBack = { navController.popBackStack() }
+                    )
+                }
                 composable("widget_showcase") {
                     WidgetShowcaseScreen(
                         onNavigateBack = { navController.popBackStack() }

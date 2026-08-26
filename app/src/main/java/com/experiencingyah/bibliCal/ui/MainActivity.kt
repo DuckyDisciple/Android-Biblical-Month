@@ -6,12 +6,9 @@ import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
-import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -19,36 +16,18 @@ import androidx.lifecycle.lifecycleScope
 import com.experiencingyah.bibliCal.integrations.PassagesIntegration
 import com.experiencingyah.bibliCal.ui.nav.BiblicalMonthAppRoot
 import com.experiencingyah.bibliCal.ui.screens.PassagesRequest
+import com.experiencingyah.bibliCal.ui.theme.BibliCalTheme
 import kotlinx.coroutines.launch
-
-// Royal blue color scheme
-val RoyalBlue = Color(0xFF1E3A8A) // Royal blue
-val RoyalBlueLight = Color(0xFF3B5BA8)
-val RoyalBlueDark = Color(0xFF0F1F4A)
 
 class MainActivity : ComponentActivity() {
     private var passagesRequestState by mutableStateOf<PassagesRequest?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContent {
-            val darkTheme = isSystemInDarkTheme()
-            MaterialTheme(
-                colorScheme = if (darkTheme) {
-                    darkColorScheme(
-                        primary = RoyalBlueLight,
-                        secondary = RoyalBlue,
-                        tertiary = RoyalBlueDark,
-                    )
-                } else {
-                    lightColorScheme(
-                        primary = RoyalBlue,
-                        secondary = RoyalBlueDark,
-                        tertiary = RoyalBlueLight,
-                    )
-                }
-            ) {
-                Surface {
+            BibliCalTheme {
+                Surface(color = MaterialTheme.colorScheme.background) {
                     BiblicalMonthAppRoot(
                         passagesRequest = passagesRequestState,
                         onSendToPassages = { sendToPassages() },

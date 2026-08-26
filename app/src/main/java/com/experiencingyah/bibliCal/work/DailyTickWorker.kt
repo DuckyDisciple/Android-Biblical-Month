@@ -28,8 +28,12 @@ class DailyTickWorker(
             if (settings.promptsEnabled.first()) {
                 maybePromptMoon(repo, settings, today)
                 maybePromptBarley(repo, settings, today)
+                // Schedule moon prompt for 1 hour before sunset when on day 29
+                if (today.dayOfMonth == 29) {
+                    MoonPromptWorker.scheduleIfDay29(applicationContext)
+                }
             }
-            
+
             // Check for Shabbat and feast reminders
             checkShabbatReminder(repo, settings)
             checkFeastReminders(repo, settings)
@@ -103,6 +107,15 @@ class DailyTickWorker(
 
         val shouldPrompt = (today.dayOfMonth == 29 || today.dayOfMonth == 30)
         if (!shouldPrompt) return
+
+        val monthStartEpoch = today.monthStart.toEpochDay()
+        val ackEpoch = settings.getMoonPromptAckMonthStartEpoch()
+        val ackDay = settings.getMoonPromptAckCompletedDay()
+        val alreadyAnswered = ackEpoch == monthStartEpoch && (
+            (today.dayOfMonth == 29 && ackDay >= 29) ||
+                (today.dayOfMonth == 30 && ackDay >= 30)
+            )
+        if (alreadyAnswered) return
 
         val tomorrow = LocalDate.now().plusDays(1)
         if (repo.hasMonthStartOn(tomorrow)) return // already confirmed

@@ -23,6 +23,7 @@ data class SettingsUiState(
     val includeHanukkah: Boolean = false,
     val includePurim: Boolean = false,
     val showJerusalemTime: Boolean = false,
+    val useCivilTwilightForCountdown: Boolean = true,
 )
 
 class SettingsViewModel(app: Application) : AndroidViewModel(app) {
@@ -48,6 +49,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                 includeHanukkah = settings.includeHanukkah.first(),
                 includePurim = settings.includePurim.first(),
                 showJerusalemTime = settings.showJerusalemTime.first(),
+                useCivilTwilightForCountdown = settings.useCivilTwilightForCountdown.first(),
             )
         }
     }
@@ -106,6 +108,13 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     fun setShowJerusalemTime(enabled: Boolean) {
         viewModelScope.launch {
             settings.setShowJerusalemTime(enabled)
+            refresh()
+        }
+    }
+
+    fun setUseCivilTwilightForCountdown(enabled: Boolean) {
+        viewModelScope.launch {
+            settings.setUseCivilTwilightForCountdown(enabled)
             refresh()
         }
     }
