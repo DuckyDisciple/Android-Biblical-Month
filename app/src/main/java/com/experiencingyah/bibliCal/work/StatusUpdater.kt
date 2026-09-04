@@ -39,10 +39,8 @@ object StatusUpdater {
     ): com.experiencingyah.bibliCal.domain.LunarDate? {
         Notifier.ensureChannels(context)
 
-        // Get location (cached or default) to calculate sunset
-        val cachedLocation = settings.getCachedLocation()
-        val latitude = cachedLocation?.first ?: DEFAULT_LATITUDE
-        val longitude = cachedLocation?.second ?: DEFAULT_LONGITUDE
+        // Get location (user-chosen or calculation fallback)
+        val (latitude, longitude) = getLocation(settings)
 
         val now = ZonedDateTime.now(ZoneId.systemDefault())
         val useCivilTwilight = settings.useCivilTwilightForCountdown.first()
@@ -95,15 +93,21 @@ object StatusUpdater {
     }
 
     /**
-     * Gets the cached location or defaults.
+     * User-chosen location for sunset math, or the NY-area fallback when unset.
+     * Callers that display a place name should use [SettingsRepository.getUserLocation]
+     * and must not treat the fallback as the user's real location.
      */
     suspend fun getLocation(settings: SettingsRepository): Pair<Double, Double> {
-        val cachedLocation = settings.getCachedLocation()
+        val user = settings.getUserLocation()
         return Pair(
-            cachedLocation?.first ?: DEFAULT_LATITUDE,
-            cachedLocation?.second ?: DEFAULT_LONGITUDE
+            user?.latitude ?: DEFAULT_LATITUDE,
+            user?.longitude ?: DEFAULT_LONGITUDE,
         )
     }
+
+    /** True when the user has explicitly set a location (GPS or city). */
+    suspend fun hasUserLocation(settings: SettingsRepository): Boolean =
+        settings.getUserLocation() != null
 
     /**
      * Resolves the current biblical [LunarDate] using the same sunset/twilight rules as the Today screen and notifications.
@@ -144,7 +148,8 @@ object StatusUpdater {
         }
     }
 
-    // Default location (approximately New York area)
+    // Fallback only for solar math when the user has not set a location.
+    // Must never be reverse-geocoded or shown as the user's place.
     const val DEFAULT_LATITUDE = 40.0
     const val DEFAULT_LONGITUDE = -74.0
 }

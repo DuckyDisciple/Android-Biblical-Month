@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Update
 
 @Dao
 interface BiblicalMonthDao {
@@ -46,5 +47,37 @@ interface BiblicalMonthDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertYearDecision(entity: YearDecisionEntity)
+
+    // --- User events ---
+
+    @Query("SELECT * FROM user_events WHERE id = :id LIMIT 1")
+    suspend fun getUserEventById(id: Long): UserEventEntity?
+
+    @Query(
+        """
+        SELECT * FROM user_events
+        WHERE epochDay >= :startEpochDay AND epochDay <= :endEpochDay
+        ORDER BY epochDay ASC, allDay DESC, startMinutesFromMidnight ASC, title ASC
+        """,
+    )
+    suspend fun getUserEventsInRange(startEpochDay: Long, endEpochDay: Long): List<UserEventEntity>
+
+    @Query(
+        """
+        SELECT * FROM user_events
+        WHERE epochDay = :epochDay
+        ORDER BY allDay DESC, startMinutesFromMidnight ASC, title ASC
+        """,
+    )
+    suspend fun getUserEventsForDay(epochDay: Long): List<UserEventEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertUserEvent(entity: UserEventEntity): Long
+
+    @Update
+    suspend fun updateUserEvent(entity: UserEventEntity)
+
+    @Query("DELETE FROM user_events WHERE id = :id")
+    suspend fun deleteUserEvent(id: Long)
 }
 

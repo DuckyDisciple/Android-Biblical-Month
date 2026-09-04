@@ -244,6 +244,7 @@ fun CalendarScreen(vm: CalendarViewModel = viewModel()) {
                                     } else {
                                         CalendarDayCellView(
                                             cell = cell,
+                                            onClick = { vm.selectDay(cell) },
                                             modifier = Modifier
                                                 .weight(1f)
                                                 .zIndex(cellIndex.toFloat()),
@@ -293,11 +294,26 @@ fun CalendarScreen(vm: CalendarViewModel = viewModel()) {
             }
         }
     }
+
+    state.selectedDay?.let { detail ->
+        DayDetailSheet(
+            detail = detail,
+            onDismiss = { vm.dismissDayDetail() },
+            onAddEvent = { title, allDay, startMinutes, notes ->
+                vm.addUserEvent(title, detail.date, allDay, startMinutes, notes)
+            },
+            onUpdateEvent = { event -> vm.updateUserEvent(event) },
+            onDeleteEvent = { id -> vm.deleteUserEvent(id, detail.date) },
+            onHideDeviceEvent = { id -> vm.hideDeviceEvent(id, detail.date) },
+            onDeleteDeviceEvent = { id -> vm.deleteDeviceEventSeries(id, detail.date) },
+        )
+    }
 }
 
 @Composable
 private fun CalendarDayCellView(
     cell: DayCell,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val sabbath = BibliCalThemeTokens.colors.sabbath
@@ -327,7 +343,13 @@ private fun CalendarDayCellView(
     }
 
     BoxWithConstraints(
-        modifier = modifier.height(52.dp)
+        modifier = modifier
+            .height(52.dp)
+            .clickable(
+                role = Role.Button,
+                onClickLabel = "Day ${cell.lunarDay}",
+                onClick = onClick,
+            )
     ) {
         val gregorianHeight = 13.dp
         // Shift 25% right so the civil date sits toward the next biblical day (after sunset).
@@ -355,6 +377,15 @@ private fun CalendarDayCellView(
                 ),
                 color = lunarTextColor,
             )
+            if (cell.hasPersonalEvents) {
+                Box(
+                    modifier = Modifier
+                        .padding(top = 2.dp)
+                        .size(5.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.tertiary),
+                )
+            }
         }
 
         Box(

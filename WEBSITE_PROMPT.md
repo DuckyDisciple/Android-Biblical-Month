@@ -25,24 +25,26 @@ Please create the following pages for the BibliCal Android app on the Experienci
 1. **Location Data:**
    - The app requests location permissions (ACCESS_FINE_LOCATION and ACCESS_COARSE_LOCATION)
    - Location data is collected ONLY for calculating local sunset times, which are used to determine the start of Biblical days (which begin at sunset)
-   - Location data is stored locally on the device using Android DataStore
-   - Location data is cached for up to 24 hours to improve widget performance
+   - Users can set location via GPS or by searching for a city in Settings
+   - Location data (coordinates and place label) is stored locally on the device using Android DataStore
    - Location data is NEVER transmitted off the device
    - Location data is NEVER shared with third parties
-   - Users can deny location permissions, and the app will use default coordinates (latitude 40.0, longitude -74.0) as a fallback
+   - If no location is set, sunset calculations use an approximate default for math only; the app does not present that default as the user's location
 
 2. **Calendar Data (Optional):**
-   - The app requests calendar permissions (READ_CALENDAR and WRITE_CALENDAR) ONLY if the user explicitly enables the calendar export feature in Settings
-   - If enabled, the app writes Biblical month starts and feast days to a user-selected calendar on the device
-   - The app does NOT read existing calendar events
+   - The app requests calendar permissions (READ_CALENDAR and WRITE_CALENDAR) when the user enables calendar features in Settings
+   - **Export:** If enabled, the app writes Biblical month starts and feast days to a user-selected calendar on the device
+   - **Overlay:** If the user enables "Show device calendar events," the app reads existing calendar events from selected device calendars and displays them as a read-only overlay on the biblical calendar and Today screen
+   - Personal events created inside BibliCal are stored locally in the app database and are not written to device calendars unless exported as feast days
    - Calendar data remains on the device and is NEVER transmitted
 
 3. **App Data Storage:**
    - The app stores the following data locally on the device:
      - Biblical month start dates (stored using Room database)
      - Year decisions (whether a year has 12 or 13 months, stored using Room database)
-     - User preferences and settings (notification preferences, month naming mode, etc., stored using Android DataStore)
-     - Cached location coordinates (as described above)
+     - User-created personal calendar events (stored using Room database)
+     - User preferences and settings (notification preferences, month naming mode, location, etc., stored using Android DataStore)
+     - Chosen location coordinates and label (as described above)
    - All data is stored locally using Android's Room database and DataStore
    - No data is transmitted to external servers
    - No data is backed up to cloud services by the app (users may have device-level backups enabled)
@@ -165,6 +167,7 @@ Please create the following pages for the BibliCal Android app on the Experienci
 4. Consider adding a link to the privacy policy in the app's settings screen (this can be added later)
 5. The support page will help reduce support requests and provide a professional presence
 6. The about page helps establish credibility and provides context about the app
+7. **Update the live privacy page** on ExperiencingYah.com before refreshing the Play listing: location is now user-chosen (GPS or city), and calendar read is optional for the device-calendar overlay (not export-only / write-only).
 
 ---
 

@@ -20,9 +20,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedTextField
 import com.experiencingyah.bibliCal.ui.components.CelCard
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -73,19 +75,62 @@ fun SettingsScreen(
     var calendars by remember { mutableStateOf(emptyList<com.experiencingyah.bibliCal.calendar.DeviceCalendar>()) }
     var exportStatus by remember { mutableStateOf<String?>(null) }
     var passagesSyncStatus by remember { mutableStateOf<String?>(null) }
+    var cityQuery by remember { mutableStateOf("") }
+    var locationStatus by remember { mutableStateOf<String?>(null) }
+    var isRefreshingGps by remember { mutableStateOf(false) }
     
     // Track calendar permission state
     var hasCalendarPermission by remember { mutableStateOf(false) }
+    var hasCalendarReadPermission by remember { mutableStateOf(false) }
     
     // Check calendar permission on launch
     LaunchedEffect(Unit) {
         val canRead = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
         val canWrite = ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
         hasCalendarPermission = canRead && canWrite
+        hasCalendarReadPermission = canRead
+        if (canRead) {
+            calendars = CalendarExporter(context).listCalendars()
+        }
     }
 
     val notifPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         // no-op; UI reads state from toggles
+    }
+
+    val locationPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val granted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (granted) {
+            isRefreshingGps = true
+            scope.launch {
+                try {
+                    val fused = com.google.android.gms.location.LocationServices
+                        .getFusedLocationProviderClient(context)
+                    val task = fused.getCurrentLocation(
+                        com.google.android.gms.location.Priority.PRIORITY_BALANCED_POWER_ACCURACY,
+                        null,
+                    )
+                    val loc = withContext(Dispatchers.IO) {
+                        Tasks.await(task, 8, TimeUnit.SECONDS)
+                    }
+                    if (loc != null) {
+                        vm.setLocationFromGps(loc.latitude, loc.longitude)
+                        locationStatus = "Updated from GPS"
+                    } else {
+                        locationStatus = "Could not get GPS fix. Try again outdoors."
+                    }
+                } catch (e: Exception) {
+                    locationStatus = "GPS error: ${e.message}"
+                } finally {
+                    isRefreshingGps = false
+                }
+            }
+        } else {
+            locationStatus = "Location permission denied"
+        }
     }
 
     val calendarPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
@@ -95,7 +140,19 @@ fun SettingsScreen(
         val canWrite = permissions[Manifest.permission.WRITE_CALENDAR] == true ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
         hasCalendarPermission = canRead && canWrite
-        if (hasCalendarPermission) {
+        hasCalendarReadPermission = canRead
+        if (canRead) {
+            scope.launch { calendars = CalendarExporter(context).listCalendars() }
+        }
+    }
+
+    val calendarReadPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasCalendarReadPermission = granted ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
+        if (hasCalendarReadPermission) {
+            vm.setShowDeviceCalendarEvents(true)
             scope.launch { calendars = CalendarExporter(context).listCalendars() }
         }
     }
@@ -227,6 +284,108 @@ fun SettingsScreen(
 
                 HorizontalDivider()
 
+                // Location for sunset calculations
+                Text("Location", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "Used to calculate local sunset for the biblical day. Timezone follows your phone.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                val placeName = state.locationLabel
+                    ?: if (state.locationLatitude != null) "Coordinates set" else "Not set"
+                Text("Place: $placeName", style = MaterialTheme.typography.bodyMedium)
+                if (state.locationLatitude != null && state.locationLongitude != null) {
+                    Text(
+                        String.format(
+                            "%.4f°, %.4f°",
+                            state.locationLatitude,
+                            state.locationLongitude,
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(
+                    "Phone timezone: ${state.deviceTimezoneDisplay}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (locationStatus != null) {
+                    Text(locationStatus!!, style = MaterialTheme.typography.bodySmall)
+                }
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isRefreshingGps,
+                    onClick = {
+                        locationStatus = null
+                        val hasFine = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                        ) == PackageManager.PERMISSION_GRANTED
+                        val hasCoarse = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.ACCESS_COARSE_LOCATION,
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (!hasFine && !hasCoarse) {
+                            locationPermLauncher.launch(
+                                arrayOf(
+                                    Manifest.permission.ACCESS_FINE_LOCATION,
+                                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                                )
+                            )
+                        } else {
+                            isRefreshingGps = true
+                            scope.launch {
+                                try {
+                                    val fused = com.google.android.gms.location.LocationServices
+                                        .getFusedLocationProviderClient(context)
+                                    val task = fused.getCurrentLocation(
+                                        com.google.android.gms.location.Priority.PRIORITY_BALANCED_POWER_ACCURACY,
+                                        null,
+                                    )
+                                    val loc = withContext(Dispatchers.IO) {
+                                        Tasks.await(task, 8, TimeUnit.SECONDS)
+                                    }
+                                    if (loc != null) {
+                                        vm.setLocationFromGps(loc.latitude, loc.longitude)
+                                        locationStatus = "Updated from GPS"
+                                    } else {
+                                        locationStatus = "Could not get GPS fix. Try again outdoors."
+                                    }
+                                } catch (e: Exception) {
+                                    locationStatus = "GPS error: ${e.message}"
+                                } finally {
+                                    isRefreshingGps = false
+                                }
+                            }
+                        }
+                    },
+                ) {
+                    Text(
+                        if (isRefreshingGps) "Getting GPS…" else "Use current GPS",
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
+                }
+                OutlinedTextField(
+                    value = cityQuery,
+                    onValueChange = { cityQuery = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Search city") },
+                    singleLine = true,
+                )
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        locationStatus = null
+                        vm.searchAndSetCity(cityQuery) { ok, msg ->
+                            locationStatus = msg
+                            if (ok) cityQuery = ""
+                        }
+                    },
+                ) {
+                    Text("Set from city", color = MaterialTheme.colorScheme.onPrimary)
+                }
+
+                HorizontalDivider()
+
                 // Sunset: when the biblical day transitions
                 Text("Sunset", style = MaterialTheme.typography.titleLarge)
                 Row(
@@ -308,6 +467,111 @@ fun SettingsScreen(
                         "Set a date first from the Today tab.",
                         style = MaterialTheme.typography.bodySmall
                     )
+                }
+
+                HorizontalDivider()
+
+                // Device calendar overlay (read-only)
+                Text("Device Calendar Overlay", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "Show events from selected phone calendars (read-only). Old events that still appear were usually never removed from Android’s calendar database—tap Hide on the day sheet, or open and delete them in Google Calendar.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                        Text("Show device events", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Overlays Google and other calendars on day details.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Switch(
+                        checked = state.showDeviceCalendarEvents,
+                        onCheckedChange = { enabled ->
+                            if (enabled && !hasCalendarReadPermission) {
+                                calendarReadPermLauncher.launch(Manifest.permission.READ_CALENDAR)
+                            } else {
+                                vm.setShowDeviceCalendarEvents(enabled)
+                            }
+                        },
+                    )
+                }
+                if (state.showDeviceCalendarEvents) {
+                    if (!hasCalendarReadPermission) {
+                        Button(onClick = {
+                            calendarReadPermLauncher.launch(Manifest.permission.READ_CALENDAR)
+                        }) {
+                            Text("Grant calendar read permission", color = MaterialTheme.colorScheme.onPrimary)
+                        }
+                    } else {
+                        if (calendars.isEmpty()) {
+                            LaunchedEffect(Unit) {
+                                calendars = CalendarExporter(context).listCalendars()
+                            }
+                        }
+                        Text(
+                            "Include calendars (none selected = all):",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        calendars.forEach { cal ->
+                            val checked = state.deviceCalendarIds.isEmpty() ||
+                                state.deviceCalendarIds.contains(cal.id)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        vm.toggleDeviceCalendarId(
+                                            cal.id,
+                                            calendars.map { it.id },
+                                        )
+                                    },
+                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                            ) {
+                                Checkbox(
+                                    checked = checked,
+                                    onCheckedChange = {
+                                        vm.toggleDeviceCalendarId(
+                                            cal.id,
+                                            calendars.map { it.id },
+                                        )
+                                    },
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(cal.displayName, style = MaterialTheme.typography.bodyMedium)
+                                    if (cal.accountName.isNotBlank()) {
+                                        Text(
+                                            cal.accountName,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        if (state.deviceCalendarIds.isEmpty() && calendars.isNotEmpty()) {
+                            Text(
+                                "All calendars included. Tap to select specific ones.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (state.hiddenDeviceEventCount > 0) {
+                            Text(
+                                "${state.hiddenDeviceEventCount} device event(s) hidden from BibliCal.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Button(
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { vm.clearHiddenDeviceEvents() },
+                            ) {
+                                Text("Clear hidden device events", color = MaterialTheme.colorScheme.onPrimary)
+                            }
+                        }
+                    }
                 }
 
                 HorizontalDivider()
@@ -458,11 +722,11 @@ fun SettingsScreen(
                 SunsetCalculator.SOLAR_ELEVATION_GEOMETRIC
             }
 
-            var lat = 40.0
-            var lon = -74.0
-            settingsRepo.getCachedLocation()?.let {
-                lat = it.first
-                lon = it.second
+            var lat = StatusUpdater.DEFAULT_LATITUDE
+            var lon = StatusUpdater.DEFAULT_LONGITUDE
+            settingsRepo.getUserLocation()?.let {
+                lat = it.latitude
+                lon = it.longitude
             }
             try {
                 val fusedLocationClient =
@@ -478,7 +742,7 @@ fun SettingsScreen(
                     lon = fused.longitude
                 }
             } catch (_: Exception) {
-                // keep cached or default
+                // keep user location or default
             }
 
             val todaySunset = SunsetCalculator.calculateSunsetTime(

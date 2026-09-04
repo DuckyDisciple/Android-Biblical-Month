@@ -7,12 +7,15 @@ import android.location.Location
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.experiencingyah.bibliCal.calendar.DeviceCalendarReader
 import com.experiencingyah.bibliCal.data.LunarRepository
+import com.experiencingyah.bibliCal.data.UserEventRepository
 import com.experiencingyah.bibliCal.data.settings.SettingsRepository
 import com.experiencingyah.bibliCal.domain.FeastDay
 import com.experiencingyah.bibliCal.domain.MonthStatus
 import com.experiencingyah.bibliCal.util.MonthNames
 import com.experiencingyah.bibliCal.util.SunsetCalculator
+import com.experiencingyah.bibliCal.util.formatEventTime
 import com.experiencingyah.bibliCal.widgets.WidgetHelper
 import com.experiencingyah.bibliCal.work.StatusUpdater
 import kotlinx.coroutines.Dispatchers
@@ -79,6 +82,16 @@ data class JerusalemTimeInfo(
     }
 }
 
+data class ScheduleItem(
+    val title: String,
+    val timeLabel: String,
+    val source: String, // "personal" or "device"
+    val notes: String? = null,
+    val deviceEventId: Long? = null,
+    val deviceBeginMillis: Long? = null,
+    val deviceEndMillis: Long? = null,
+)
+
 data class TodayUiState(
     val hasAnchor: Boolean = false,
     val lunarLabel: String = "—",
@@ -90,6 +103,7 @@ data class TodayUiState(
     val sunsetInfo: SunsetInfo? = null,
     val jerusalemTimeInfo: JerusalemTimeInfo? = null,
     val upcomingFeasts: List<UpcomingFeast> = emptyList(),
+    val todaysSchedule: List<ScheduleItem> = emptyList(),
     val currentDayOfMonth: Int = 0,
     val showNextMonthButton: Boolean = false,
     val isLoading: Boolean = false,
@@ -101,6 +115,8 @@ data class TodayUiState(
 class TodayViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = LunarRepository(app)
     private val settings = SettingsRepository(app)
+    private val userEvents = UserEventRepository(app)
+    private val deviceReader = DeviceCalendarReader(app)
     private val geocoder = Geocoder(app)
     private val appContext = app.applicationContext
 
@@ -108,24 +124,27 @@ class TodayViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<TodayUiState> = _state.asStateFlow()
 
     private var currentLocation: Location? = null
+    private var lastGeocodedLatLon: Pair<Double, Double>? = null
     private var isRefreshing = false
 
     init {
-        // Load cached location immediately so we can calculate sunset right away
+        // Load user location immediately so we can calculate sunset right away
         viewModelScope.launch {
             try {
-                val cachedLocation = settings.getCachedLocation()
-                if (cachedLocation != null) {
-                    // Create a Location object from cached coordinates
-                    val location = android.location.Location("cached")
-                    location.latitude = cachedLocation.first
-                    location.longitude = cachedLocation.second
-                    location.accuracy = 100f // Approximate accuracy for cached location
+                val userLocation = settings.getUserLocation()
+                if (userLocation != null) {
+                    val location = android.location.Location("user")
+                    location.latitude = userLocation.latitude
+                    location.longitude = userLocation.longitude
+                    location.accuracy = 100f
                     location.time = System.currentTimeMillis()
                     currentLocation = location
+                    if (userLocation.label != null) {
+                        lastGeocodedLatLon = Pair(userLocation.latitude, userLocation.longitude)
+                    }
                 }
             } catch (e: Exception) {
-                // Ignore errors loading cached location
+                // Ignore errors loading location
             }
             // Refresh after attempting to load cached location
             refresh()
@@ -143,6 +162,16 @@ class TodayViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch {
             settings.useCivilTwilightForCountdown.collect {
+                refresh()
+            }
+        }
+        viewModelScope.launch {
+            settings.showDeviceCalendarEvents.collect {
+                refresh()
+            }
+        }
+        viewModelScope.launch {
+            settings.hiddenDeviceEventIds.collect {
                 refresh()
             }
         }
@@ -191,10 +220,11 @@ class TodayViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setLocation(location: Location?) {
         currentLocation = location
-        // Cache location for widget use
+        lastGeocodedLatLon = null // Force re-geocode
         if (location != null) {
             viewModelScope.launch {
-                settings.cacheLocation(location.latitude, location.longitude)
+                val label = reverseGeocode(location.latitude, location.longitude)
+                settings.cacheLocation(location.latitude, location.longitude, label)
             }
         }
         // Refresh to recalculate isAfterSunset with the new location
@@ -295,8 +325,18 @@ class TodayViewModel(app: Application) : AndroidViewModel(app) {
 
             // Update state atomically - day transition and countdown use the same nextSunset from above
             val currentState = _state.value
+            val userLoc = settings.getUserLocation()
+            val existingLocationLabel = when {
+                userLoc == null -> "Location not set — used for sunset"
+                userLoc.label != null &&
+                    lastGeocodedLatLon?.first == userLoc.latitude &&
+                    lastGeocodedLatLon?.second == userLoc.longitude -> userLoc.label
+                else -> currentState.sunsetInfo?.location?.takeIf {
+                    lastGeocodedLatLon?.first == lat && lastGeocodedLatLon?.second == lon
+                }
+            }
             val newSunsetInfo = nextSunset?.let {
-                SunsetInfo(it, zoneId.id, currentState.sunsetInfo?.location)
+                SunsetInfo(it, zoneId.id, existingLocationLabel)
             } ?: currentState.sunsetInfo
             val monthStartEpoch = today.monthStart.toEpochDay()
             val ackEpoch = settings.getMoonPromptAckMonthStartEpoch()
@@ -321,6 +361,7 @@ class TodayViewModel(app: Application) : AndroidViewModel(app) {
                 sunsetInfo = newSunsetInfo,
                 jerusalemTimeInfo = currentState.jerusalemTimeInfo,
                 upcomingFeasts = currentState.upcomingFeasts,
+                todaysSchedule = currentState.todaysSchedule,
                 isLoadingSunset = currentState.isLoadingSunset,
                 isLoadingFeasts = currentState.isLoadingFeasts,
                 showWidgetBanner = currentState.showWidgetBanner,
@@ -334,44 +375,104 @@ class TodayViewModel(app: Application) : AndroidViewModel(app) {
             updateUpcomingFeasts()
             updateSunsetCountdown()
             updateJerusalemTimeInfo()
+            updateTodaysSchedule(dateToUseForBiblical)
             } finally {
                 isRefreshing = false
             }
         }
     }
 
+    private suspend fun updateTodaysSchedule(biblicalGregorianDate: LocalDate) {
+        val personal = userEvents.getForDay(biblicalGregorianDate).map { event ->
+            ScheduleItem(
+                title = event.title,
+                timeLabel = formatEventTime(event.allDay, event.startMinutesFromMidnight),
+                source = "personal",
+                notes = event.notes,
+            )
+        }
+        val device = if (settings.showDeviceCalendarEvents.first() && deviceReader.hasReadPermission()) {
+            val ids = settings.getDeviceCalendarIds()
+            val hidden = settings.getHiddenDeviceEventIds()
+            deviceReader.getEventsForDay(biblicalGregorianDate, ids, hidden).map { event ->
+                ScheduleItem(
+                    title = event.title,
+                    timeLabel = formatEventTime(event.allDay, event.startMinutesFromMidnight),
+                    source = "device",
+                    notes = event.calendarDisplayName,
+                    deviceEventId = event.id,
+                    deviceBeginMillis = event.beginMillis,
+                    deviceEndMillis = event.endMillis,
+                )
+            }
+        } else {
+            emptyList()
+        }
+        val combined = (personal + device).sortedWith(
+            compareBy(
+                { it.timeLabel == "All day" },
+                { it.timeLabel },
+                { it.title },
+            )
+        )
+        _state.value = _state.value.copy(todaysSchedule = combined)
+    }
+
     private fun updateSunsetCountdown() {
         viewModelScope.launch {
-            // nextSunset is set in refresh() so countdown and day transition stay in sync.
-            // Here we only fill in the location string when missing.
             val currentInfo = _state.value.sunsetInfo
-            if (currentInfo?.location != null) {
-                _state.value = _state.value.copy(isLoadingSunset = false)
-                return@launch
-            }
             if (currentInfo == null) {
                 _state.value = _state.value.copy(isLoadingSunset = false)
                 return@launch
             }
-            val (lat, lon) = currentLocation?.let { Pair(it.latitude, it.longitude) }
-                ?: StatusUpdater.getLocation(settings)
-            val locationStr = withContext(Dispatchers.IO) {
-                try {
-                    val addresses = geocoder.getFromLocation(lat, lon, 1)
-                    if (!addresses.isNullOrEmpty()) {
-                        val address = addresses[0]
-                        address.locality ?: address.adminArea ?: address.countryName
-                    } else null
-                } catch (e: Exception) {
-                    null
-                }
+
+            val userLoc = settings.getUserLocation()
+            if (userLoc == null) {
+                _state.value = _state.value.copy(
+                    sunsetInfo = currentInfo.copy(location = "Location not set — used for sunset"),
+                    isLoadingSunset = false,
+                )
+                return@launch
+            }
+
+            val lat = userLoc.latitude
+            val lon = userLoc.longitude
+            // Skip re-geocode only when coords and label already match
+            if (userLoc.label != null &&
+                lastGeocodedLatLon?.first == lat &&
+                lastGeocodedLatLon?.second == lon
+            ) {
+                _state.value = _state.value.copy(
+                    sunsetInfo = currentInfo.copy(location = userLoc.label),
+                    isLoadingSunset = false,
+                )
+                return@launch
+            }
+
+            val locationStr = reverseGeocode(lat, lon) ?: userLoc.label
+            lastGeocodedLatLon = Pair(lat, lon)
+            if (locationStr != null && locationStr != userLoc.label) {
+                settings.setLocationLabel(locationStr)
             }
             _state.value = _state.value.copy(
                 sunsetInfo = currentInfo.copy(location = locationStr),
-                isLoadingSunset = false
+                isLoadingSunset = false,
             )
         }
     }
+
+    private suspend fun reverseGeocode(lat: Double, lon: Double): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                val addresses = geocoder.getFromLocation(lat, lon, 1)
+                if (!addresses.isNullOrEmpty()) {
+                    val address = addresses[0]
+                    address.locality ?: address.adminArea ?: address.countryName
+                } else null
+            } catch (e: Exception) {
+                null
+            }
+        }
 
     private suspend fun updateUpcomingFeasts() {
         _state.value = _state.value.copy(isLoadingFeasts = true)

@@ -38,10 +38,21 @@ class SettingsRepository(private val context: Context) {
         val PROJECT_EXTRA_MONTH = booleanPreferencesKey("project_extra_month")
         val PROJECTED_MONTH_LENGTHS = stringPreferencesKey("projected_month_lengths") // JSON: {"year-month": "29" or "30"}
         
-        // Cached location for widget use
+        // User-chosen location for sunset calculations (no TTL once set)
+        val USER_LATITUDE = doublePreferencesKey("user_latitude")
+        val USER_LONGITUDE = doublePreferencesKey("user_longitude")
+        val LOCATION_LABEL = stringPreferencesKey("location_label")
+        val LOCATION_SOURCE = stringPreferencesKey("location_source")
+        // Legacy cache keys (migrated into user location on read)
         val CACHED_LATITUDE = doublePreferencesKey("cached_latitude")
         val CACHED_LONGITUDE = doublePreferencesKey("cached_longitude")
         val CACHED_LOCATION_TIMESTAMP = longPreferencesKey("cached_location_timestamp")
+
+        // Device calendar overlay
+        val SHOW_DEVICE_CALENDAR_EVENTS = booleanPreferencesKey("show_device_calendar_events")
+        val DEVICE_CALENDAR_IDS = stringPreferencesKey("device_calendar_ids") // comma-separated IDs
+        /** Event IDs (masters) hidden from the BibliCal overlay only. */
+        val HIDDEN_DEVICE_EVENT_IDS = stringPreferencesKey("hidden_device_event_ids")
         
         // Widget banner dismissal tracking (reappears on app update)
         val WIDGET_BANNER_DISMISSED_VERSION = stringPreferencesKey("widget_banner_dismissed_version")
@@ -77,6 +88,12 @@ class SettingsRepository(private val context: Context) {
 
     val useCivilTwilightForCountdown: Flow<Boolean> =
         context.dataStore.data.map { it[Keys.USE_CIVIL_TWILIGHT_FOR_COUNTDOWN] ?: true }
+
+    val showDeviceCalendarEvents: Flow<Boolean> =
+        context.dataStore.data.map { it[Keys.SHOW_DEVICE_CALENDAR_EVENTS] ?: false }
+
+    val locationLabel: Flow<String?> =
+        context.dataStore.data.map { it[Keys.LOCATION_LABEL] }
 
     suspend fun setStatusNotificationEnabled(enabled: Boolean) {
         context.dataStore.edit { it[Keys.STATUS_NOTIFICATION_ENABLED] = enabled }
@@ -300,38 +317,145 @@ class SettingsRepository(private val context: Context) {
     }
 
     /**
-     * Cache location for widget use. Location is considered valid for 24 hours.
+     * Persist GPS location as the user's chosen location (no expiry).
+     * Also writes legacy cache keys for older call sites.
      */
-    suspend fun cacheLocation(latitude: Double, longitude: Double) {
+    suspend fun cacheLocation(latitude: Double, longitude: Double, label: String? = null) {
+        setUserLocation(latitude, longitude, label, LocationSource.GPS)
+    }
+
+    /**
+     * Persist a manually chosen city/coordinates as the user's location.
+     */
+    suspend fun setManualLocation(latitude: Double, longitude: Double, label: String?) {
+        setUserLocation(latitude, longitude, label, LocationSource.MANUAL)
+    }
+
+    suspend fun setUserLocation(
+        latitude: Double,
+        longitude: Double,
+        label: String?,
+        source: LocationSource,
+    ) {
         context.dataStore.edit {
+            it[Keys.USER_LATITUDE] = latitude
+            it[Keys.USER_LONGITUDE] = longitude
+            it[Keys.LOCATION_SOURCE] = source.storedValue
+            if (label != null) {
+                it[Keys.LOCATION_LABEL] = label
+            } else {
+                it.remove(Keys.LOCATION_LABEL)
+            }
+            // Keep legacy keys in sync for any remaining readers
             it[Keys.CACHED_LATITUDE] = latitude
             it[Keys.CACHED_LONGITUDE] = longitude
             it[Keys.CACHED_LOCATION_TIMESTAMP] = System.currentTimeMillis()
         }
     }
 
+    suspend fun clearUserLocation() {
+        context.dataStore.edit {
+            it.remove(Keys.USER_LATITUDE)
+            it.remove(Keys.USER_LONGITUDE)
+            it.remove(Keys.LOCATION_LABEL)
+            it[Keys.LOCATION_SOURCE] = LocationSource.UNSET.storedValue
+            it.remove(Keys.CACHED_LATITUDE)
+            it.remove(Keys.CACHED_LONGITUDE)
+            it.remove(Keys.CACHED_LOCATION_TIMESTAMP)
+        }
+    }
+
     /**
-     * Get cached location if it exists and is recent (within 24 hours).
-     * Returns null if no cached location or if it's stale.
+     * User-chosen location, or null if never set.
+     * Migrates legacy cached lat/lon (even if "stale") into the new keys once.
      */
-    suspend fun getCachedLocation(): Pair<Double, Double>? {
+    suspend fun getUserLocation(): UserLocation? {
         val prefs = context.dataStore.data.first()
-        val lat = prefs[Keys.CACHED_LATITUDE]
-        val lon = prefs[Keys.CACHED_LONGITUDE]
-        val timestamp = prefs[Keys.CACHED_LOCATION_TIMESTAMP]
-        
-        if (lat == null || lon == null || timestamp == null) {
-            return null
+        val userLat = prefs[Keys.USER_LATITUDE]
+        val userLon = prefs[Keys.USER_LONGITUDE]
+        if (userLat != null && userLon != null) {
+            return UserLocation(
+                latitude = userLat,
+                longitude = userLon,
+                label = prefs[Keys.LOCATION_LABEL],
+                source = LocationSource.fromStored(prefs[Keys.LOCATION_SOURCE]),
+            )
         }
-        
-        // Check if location is recent (within 24 hours)
-        val ageMillis = System.currentTimeMillis() - timestamp
-        val ageHours = ageMillis / (1000 * 60 * 60)
-        if (ageHours > 24) {
-            return null // Location is stale
+        // Migrate legacy cache (ignore 24h TTL — treat as user location once known)
+        val legacyLat = prefs[Keys.CACHED_LATITUDE]
+        val legacyLon = prefs[Keys.CACHED_LONGITUDE]
+        if (legacyLat != null && legacyLon != null) {
+            setUserLocation(legacyLat, legacyLon, prefs[Keys.LOCATION_LABEL], LocationSource.GPS)
+            return UserLocation(legacyLat, legacyLon, prefs[Keys.LOCATION_LABEL], LocationSource.GPS)
         }
-        
-        return Pair(lat, lon)
+        return null
+    }
+
+    /**
+     * @deprecated Prefer [getUserLocation]. Returns coords only, or null if unset.
+     */
+    suspend fun getCachedLocation(): Pair<Double, Double>? =
+        getUserLocation()?.let { Pair(it.latitude, it.longitude) }
+
+    suspend fun setLocationLabel(label: String?) {
+        context.dataStore.edit {
+            if (label != null) it[Keys.LOCATION_LABEL] = label
+            else it.remove(Keys.LOCATION_LABEL)
+        }
+    }
+
+    suspend fun setShowDeviceCalendarEvents(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.SHOW_DEVICE_CALENDAR_EVENTS] = enabled }
+    }
+
+    suspend fun getDeviceCalendarIds(): Set<Long> {
+        val raw = context.dataStore.data.first()[Keys.DEVICE_CALENDAR_IDS] ?: return emptySet()
+        if (raw.isBlank()) return emptySet()
+        return raw.split(',')
+            .mapNotNull { it.trim().toLongOrNull() }
+            .toSet()
+    }
+
+    val deviceCalendarIds: Flow<Set<Long>> =
+        context.dataStore.data.map { prefs ->
+            val raw = prefs[Keys.DEVICE_CALENDAR_IDS] ?: return@map emptySet()
+            if (raw.isBlank()) emptySet()
+            else raw.split(',').mapNotNull { it.trim().toLongOrNull() }.toSet()
+        }
+
+    suspend fun setDeviceCalendarIds(ids: Set<Long>) {
+        context.dataStore.edit {
+            it[Keys.DEVICE_CALENDAR_IDS] = ids.sorted().joinToString(",")
+        }
+    }
+
+    suspend fun getHiddenDeviceEventIds(): Set<Long> {
+        val raw = context.dataStore.data.first()[Keys.HIDDEN_DEVICE_EVENT_IDS] ?: return emptySet()
+        if (raw.isBlank()) return emptySet()
+        return raw.split(',').mapNotNull { it.trim().toLongOrNull() }.toSet()
+    }
+
+    val hiddenDeviceEventIds: Flow<Set<Long>> =
+        context.dataStore.data.map { prefs ->
+            val raw = prefs[Keys.HIDDEN_DEVICE_EVENT_IDS] ?: return@map emptySet()
+            if (raw.isBlank()) emptySet()
+            else raw.split(',').mapNotNull { it.trim().toLongOrNull() }.toSet()
+        }
+
+    suspend fun hideDeviceEventId(eventId: Long) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[Keys.HIDDEN_DEVICE_EVENT_IDS]
+                ?.split(',')
+                ?.mapNotNull { it.trim().toLongOrNull() }
+                ?.toMutableSet()
+                ?: mutableSetOf()
+            current.add(eventId)
+            prefs[Keys.HIDDEN_DEVICE_EVENT_IDS] = current.sorted().joinToString(",")
+        }
+    }
+
+    suspend fun clearHiddenDeviceEventIds() {
+        context.dataStore.edit { it.remove(Keys.HIDDEN_DEVICE_EVENT_IDS) }
     }
 
     /**
@@ -369,4 +493,22 @@ enum class FirstfruitsRule(val storedValue: String) {
             values().firstOrNull { it.storedValue == stored } ?: FIXED_DAY_16
     }
 }
+
+enum class LocationSource(val storedValue: String) {
+    UNSET("unset"),
+    GPS("gps"),
+    MANUAL("manual");
+
+    companion object {
+        fun fromStored(stored: String?): LocationSource =
+            values().firstOrNull { it.storedValue == stored } ?: UNSET
+    }
+}
+
+data class UserLocation(
+    val latitude: Double,
+    val longitude: Double,
+    val label: String?,
+    val source: LocationSource,
+)
 

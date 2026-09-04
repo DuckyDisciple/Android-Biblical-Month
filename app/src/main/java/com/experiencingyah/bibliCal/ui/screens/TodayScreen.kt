@@ -33,6 +33,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import com.experiencingyah.bibliCal.R
+import com.experiencingyah.bibliCal.calendar.DeviceCalendarEvent
+import com.experiencingyah.bibliCal.calendar.DeviceCalendarReader
 import com.experiencingyah.bibliCal.data.LunarRepository
 import com.experiencingyah.bibliCal.ui.components.CelButton
 import com.experiencingyah.bibliCal.ui.components.CelCard
@@ -322,6 +324,76 @@ fun TodayScreen(
                     }
                 }
             }
+
+        // Today's schedule (personal + device)
+        if (!state.isLoading) {
+            CelCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    SectionHeader("Today's Schedule")
+                    Divider()
+                    if (state.todaysSchedule.isEmpty()) {
+                        Text(
+                            "No personal or device events today. Tap a day on the Calendar tab to add one.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        state.todaysSchedule.forEach { item ->
+                            val canOpenDevice = item.source == "device" && item.deviceEventId != null
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .then(
+                                        if (canOpenDevice) {
+                                            Modifier.clickable {
+                                                DeviceCalendarReader.openInDeviceCalendar(
+                                                    context,
+                                                    DeviceCalendarEvent(
+                                                        id = item.deviceEventId!!,
+                                                        calendarId = 0L,
+                                                        title = item.title,
+                                                        date = LocalDate.now(),
+                                                        allDay = item.timeLabel == "All day",
+                                                        startMinutesFromMidnight = null,
+                                                        calendarDisplayName = item.notes,
+                                                        beginMillis = item.deviceBeginMillis ?: 0L,
+                                                        endMillis = item.deviceEndMillis ?: 0L,
+                                                    ),
+                                                )
+                                            }
+                                        } else {
+                                            Modifier
+                                        }
+                                    ),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(item.title, style = MaterialTheme.typography.bodyMedium)
+                                    item.notes?.takeIf { it.isNotBlank() }?.let { notes ->
+                                        Text(
+                                            notes,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text(item.timeLabel, style = MaterialTheme.typography.bodySmall)
+                                    Text(
+                                        if (item.source == "device") "Device · tap to open" else "BibliCal",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Upcoming feasts
         if (!state.isLoading) {

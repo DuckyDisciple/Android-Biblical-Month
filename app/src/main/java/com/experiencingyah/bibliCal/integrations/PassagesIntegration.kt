@@ -6,6 +6,7 @@ import com.experiencingyah.bibliCal.data.MonthStartSummary
 import com.experiencingyah.bibliCal.data.settings.SettingsRepository
 import com.experiencingyah.bibliCal.domain.LunarDate
 import com.experiencingyah.bibliCal.util.SunsetCalculator
+import com.experiencingyah.bibliCal.work.StatusUpdater
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -62,11 +63,14 @@ object PassagesIntegration {
 
     private suspend fun biblicalDateForNow(settings: SettingsRepository): LocalDate {
         val now = ZonedDateTime.now(ZoneId.systemDefault())
-        val today = now.toLocalDate()
-        val cachedLocation = settings.getCachedLocation()
-        val (lat, lon) = cachedLocation ?: (40.0 to -74.0)
-        val sunset = SunsetCalculator.calculateSunsetTime(today, lat, lon, now.zone)
-        return if (sunset != null && now.isAfter(sunset)) today.plusDays(1) else today
+        val (lat, lon) = StatusUpdater.getLocation(settings)
+        val useCivilTwilight = settings.useCivilTwilightForCountdown.first()
+        val elevation = if (useCivilTwilight) {
+            SunsetCalculator.SOLAR_ELEVATION_CIVIL_TWILIGHT
+        } else {
+            SunsetCalculator.SOLAR_ELEVATION_GEOMETRIC
+        }
+        return StatusUpdater.getDateForBiblicalCalculation(now, lat, lon, elevation)
     }
 
     private suspend fun parshaWeekIndex(
